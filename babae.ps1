@@ -603,9 +603,6 @@ public static class BabaeWin {
     public const uint MOUSE_INPUT = 0x0010;
     public const uint QUICK_EDIT = 0x0040;
     public const uint EXTENDED_FLAGS = 0x0080;
-    public const uint ENABLE_ECHO_INPUT = 0x0004;
-    public const uint ENABLE_LINE_INPUT = 0x0002;
-    public const uint ENABLE_PROCESSED_INPUT = 0x0001;
     const ushort MOUSE_EVENT_TYPE = 0x0002;
     const uint RIGHT_BTN_PRESSED = 0x0002;
     public static IntPtr GetHandle() { return GetStdHandle(STD_INPUT); }
@@ -627,7 +624,7 @@ public static class BabaeWin {
 '@ -ErrorAction SilentlyContinue
     $script:consoleHandle = [BabaeWin]::GetHandle()
     $script:origConsoleMode = [BabaeWin]::GetMode($script:consoleHandle)
-    $newMode = ($script:origConsoleMode -bor [BabaeWin]::MOUSE_INPUT -bor [BabaeWin]::EXTENDED_FLAGS) -band (-bnot [BabaeWin]::QUICK_EDIT) -band (-bnot [BabaeWin]::ENABLE_ECHO_INPUT) -band (-bnot [BabaeWin]::ENABLE_LINE_INPUT)
+    $newMode = ($script:origConsoleMode -bor [BabaeWin]::MOUSE_INPUT -bor [BabaeWin]::EXTENDED_FLAGS) -band (-bnot [BabaeWin]::QUICK_EDIT)
     [BabaeWin]::SetModeValue($script:consoleHandle, $newMode)
     $script:mouseEnabled = $true
   } catch {}
