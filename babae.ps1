@@ -347,7 +347,15 @@ function Read-NextInputEvent {
 
   # ── Control bytes ────────────────────────────────────────────────────────
   switch ($b) {
-    13  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]13)  ([System.ConsoleKey]::Enter)     0) } }
+    10  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]13)  ([System.ConsoleKey]::Enter)     0) } }
+    13  {
+      # CR (13) might be followed by LF (10). Peek ahead and consume LF if present.
+      Stdin-PeekAvailable
+      if ($script:inputPending.Count -gt 0 -and $script:inputPending.Peek() -eq 10) {
+        $null = $script:inputPending.Dequeue()
+      }
+      return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]13)  ([System.ConsoleKey]::Enter)     0) }
+    }
     127 { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
     8   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]8)   ([System.ConsoleKey]::Backspace) 0) } }
     9   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]9)   ([System.ConsoleKey]::Tab)       0) } }

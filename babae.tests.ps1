@@ -338,3 +338,48 @@ Describe 'Chunked BPM sequence handling' {
         }
     }
 }
+
+Describe 'Raw LF handling' {
+    It 'should treat raw LF (10) as Enter' {
+        $out = [IO.Path]::GetTempFileName()
+        try {
+            $s = Start-BabaeProcess $out
+            Start-Sleep -Milliseconds 700
+
+            Send-Str $s "line1"
+            Send-Bytes $s @(10)  # LF
+            Send-Str $s "line2"
+            Start-Sleep -Milliseconds 300
+
+            Close-Editor $s
+
+            $saved = [IO.File]::ReadAllText($out) -replace "`r`n","`n" -replace "`r","`n"
+            $saved.Trim() | Should -Be "line1`nline2"
+        } finally {
+            Remove-Item $out -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+Describe 'CRLF handling' {
+    It 'should treat CRLF (13, 10) as a single Enter' {
+        $out = [IO.Path]::GetTempFileName()
+        try {
+            $s = Start-BabaeProcess $out
+            Start-Sleep -Milliseconds 700
+
+            Send-Str $s "line1"
+            Send-Bytes $s @(13, 10)  # CRLF
+            Send-Str $s "line2"
+            Start-Sleep -Milliseconds 300
+
+            Close-Editor $s
+
+            $saved = [IO.File]::ReadAllText($out) -replace "`r`n","`n" -replace "`r","`n"
+            $lines = $saved.Trim() -split "\n"
+            $lines.Count | Should -Be 2
+        } finally {
+            Remove-Item $out -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
