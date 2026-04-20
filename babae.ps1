@@ -1305,7 +1305,8 @@ function Edit-Babae {
         $event = Read-NextInputEvent
 
         # If we got a partial sequence (NoName), peek for more to avoid delayed rendering.
-        if ($event.Kind -eq 'Key' -and $event.KeyInfo.Key -eq [System.ConsoleKey]::NoName) {
+        # But only if it's an Escape character which starts a sequence.
+        if ($event.Kind -eq 'Key' -and $event.KeyInfo.Key -eq [System.ConsoleKey]::Escape) {
            Stdin-PeekAvailable
         }
         if ($event.Kind -eq 'Paste') {
