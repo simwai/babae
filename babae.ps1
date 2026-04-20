@@ -1278,7 +1278,7 @@ function Edit-Babae {
 
   $oldCtrlC = [Console]::TreatControlCAsInput
   [Console]::TreatControlCAsInput = $true
-  if (-not ($IsWindows -or $env:OS -eq 'Windows_NT')) { try { stty -echo } catch {} }
+  if (-not ($IsWindows -or $env:OS -eq 'Windows_NT')) { try { stty -echo -ixon -ixoff -isig } catch {} }
   # Enable bracketed paste mode (ESC[?2004h).  With this the terminal wraps
   # every right-click / middle-click paste in ESC[200~...ESC[201~ sentinels.
   # Our raw stdin reader picks those up and routes the payload directly to
@@ -1340,7 +1340,7 @@ function Edit-Babae {
     if ($script:mouseEnabled) {
       try { [BabaeWin]::SetModeValue($script:consoleHandle, $script:origConsoleMode) } catch {}
     }
-    if (-not ($IsWindows -or $env:OS -eq 'Windows_NT')) { try { stty echo } catch {} }
+    if (-not ($IsWindows -or $env:OS -eq 'Windows_NT')) { try { stty echo ixon ixoff isig } catch {} }
     [Console]::TreatControlCAsInput = $oldCtrlC
     # Disable bracketed paste mode before handing the terminal back.
     Out-Flush("`e[?2004l`e[?25h`e[2J`e[H`e[0m")
