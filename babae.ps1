@@ -84,31 +84,78 @@ $script:stdoutWriter.AutoFlush = $false
 #   [PSCustomObject]@{ Kind='Key';   KeyInfo=<ConsoleKeyInfo> }
 #   [PSCustomObject]@{ Kind='Paste'; Text=<string> }
 # ---------------------------------------------------------------------------
-$script:stdinStream  = [Console]::OpenStandardInput()
-$script:inputBuf     = [byte[]]::new(4096)
-$script:inputPending = [System.Collections.Generic.Queue[byte]]::new()
+$script:stdinStream   = [Console]::OpenStandardInput()
+$script:inputBuf      = [byte[]]::new(4096)
+$script:inputPending  = [System.Collections.Generic.Queue[byte]]::new()
 
-function Stdin-ReadByte {
-  # Return the next byte from the pending queue, blocking if needed.
-  if ($script:inputPending.Count -eq 0) {
-    $n = $script:stdinStream.Read($script:inputBuf, 0, $script:inputBuf.Length)
-    for ($i = 0; $i -lt $n; $i++) { $script:inputPending.Enqueue($script:inputBuf[$i]) }
+# Detect once whether stdin is a real console or redirected.
+# We cache this to pick the right non-blocking check in the hot path.
+$script:stdinIsConsole = $true
+try { [void][Console]::KeyAvailable } catch { $script:stdinIsConsole = $false }
+
+# Single outstanding async read task — ALWAYS reads into the shared inputBuf.
+# Rule: at most one ReadAsync in flight at any time.  Stdin-PeekAvailable calls
+# Stdin-TryDrain instead of creating its own tasks.  This eliminates the
+# concurrent-read race that caused missed bytes and hangs.
+$script:stdinReadTask = $null
+
+# Internal helpers ─────────────────────────────────────────────────────────────
+
+# Ensure the shared async task is running.
+function Stdin-EnsureTask {
+  if ($null -eq $script:stdinReadTask) {
+    $script:stdinReadTask = $script:stdinStream.ReadAsync($script:inputBuf, 0, $script:inputBuf.Length)
   }
-  return $script:inputPending.Dequeue()
 }
 
+# Collect a completed task's bytes into inputPending.  Returns byte count (0 = EOF).
+function Stdin-HarvestTask {
+  $n = $script:stdinReadTask.GetAwaiter().GetResult()
+  $script:stdinReadTask = $null
+  for ($i = 0; $i -lt $n; $i++) { $script:inputPending.Enqueue($script:inputBuf[$i]) }
+  return $n
+}
+
+# Non-blocking poll: returns $true if data (or EOF) is available.
+# Harvests any completed task bytes as a side-effect.
+function Stdin-TryDrain {
+  if ($script:inputPending.Count -gt 0) { return $true }
+  if ($script:stdinIsConsole) { return [Console]::KeyAvailable }
+  Stdin-EnsureTask
+  if (-not $script:stdinReadTask.IsCompleted) { return $false }
+  [void](Stdin-HarvestTask)
+  return $true  # either data or EOF — either way, caller should read
+}
+
+# ── Public API ─────────────────────────────────────────────────────────────────
+
+# Main-loop poll: returns $true when input is ready without blocking.
+function Stdin-DataAvailable { Stdin-TryDrain }
+
+# Blocking read: returns next byte, or -1 on EOF.
+function Stdin-ReadByte {
+  while ($script:inputPending.Count -eq 0) {
+    Stdin-EnsureTask
+    $n = Stdin-HarvestTask   # blocks until data arrives
+    if ($n -le 0) { return -1 }
+  }
+  return [int]$script:inputPending.Dequeue()
+}
+
+# Drain whatever is already buffered in the OS pipe — no new-data blocking.
+# Uses the single shared task; never starts a second concurrent ReadAsync.
 function Stdin-PeekAvailable {
-  # Drain any bytes waiting in the OS buffer into the pending queue without blocking.
-  if ($script:stdinStream.CanRead) {
-    while ($true) {
-      # Non-blocking peek: only read if data is actually available.
-      # Stream.ReadByte on an SSH stdin blocks; we use Console.KeyAvailable
-      # as the guard (it reflects the underlying fd, same source).
-      if (-not [Console]::KeyAvailable) { break }
-      $n = $script:stdinStream.Read($script:inputBuf, 0, $script:inputBuf.Length)
-      if ($n -le 0) { break }
-      for ($i = 0; $i -lt $n; $i++) { $script:inputPending.Enqueue($script:inputBuf[$i]) }
-    }
+  # Harvest any already-finished task first.
+  if ($null -ne $script:stdinReadTask -and $script:stdinReadTask.IsCompleted) {
+    $n = Stdin-HarvestTask
+    if ($n -le 0) { return }  # EOF
+  }
+  # Loop: start task, wait 1 ms; instant completion → more buffered data exists.
+  while ($true) {
+    Stdin-EnsureTask
+    if (-not $script:stdinReadTask.Wait(1)) { break }  # pipe empty — stop
+    $n = Stdin-HarvestTask
+    if ($n -le 0) { break }  # EOF
   }
 }
 
@@ -130,7 +177,8 @@ function Stdin-DrainPaste {
       if ($script:inputPending.Count -eq 0) { break }  # timed out
     }
 
-    $b  = $script:inputPending.Dequeue()
+    $b  = [int]$script:inputPending.Dequeue()
+    if ($b -eq -1) { break }    # EOF inside paste — return whatever we have
     $ch = [char]$b
 
     if (-not $inEsc) {
@@ -213,14 +261,29 @@ function Parse-EscapeSequence([string]$seq) {
 # Returns either a Key event or a Paste event.
 function Read-NextInputEvent {
   $b = Stdin-ReadByte
+  if ($b -eq -1) {
+    # EOF — stdin closed (test harness finished sending, or pipe broken).
+    # Return a synthetic Ctrl+Q so the editor exits cleanly.
+    return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]17) ([System.ConsoleKey]::Q) ([System.ConsoleModifiers]::Control)) }
+  }
 
   # ── Bracketed-paste start: ESC [ 2 0 0 ~ ───────────────────────────────
   # We detect it at the byte level by reading ahead after an ESC.
   if ($b -eq 27) {
-    # Peek the next byte; if none arrives quickly this is a bare ESC keypress.
+    # Wait briefly for the bytes that follow ESC to arrive.
+    # On a real tty they are all in the kernel buffer already.
+    # On a redirected pipe they may arrive in a separate read() call.
     Stdin-PeekAvailable
     if ($script:inputPending.Count -eq 0) {
-      # No follow-up → bare ESC
+      # Nothing arrived yet — wait up to 50 ms for an escape sequence.
+      $w = 0
+      while ($script:inputPending.Count -eq 0 -and $w -lt 50) {
+        Start-Sleep -Milliseconds 5; $w += 5
+        Stdin-PeekAvailable
+      }
+    }
+    if ($script:inputPending.Count -eq 0) {
+      # Still nothing after waiting → bare ESC keypress.
       return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Make-KeyInfo ([char]27) ([System.ConsoleKey]::Escape) 0) }
     }
 
@@ -1222,8 +1285,7 @@ function Edit-Babae {
       Render-Frame
 
       # Windows-only: poll for right-click paste via Win32 mouse events.
-      # Only fires when Console.KeyAvailable is false (no key in buffer).
-      if ($script:mouseEnabled -and -not [Console]::KeyAvailable) {
+      if ($script:mouseEnabled -and -not (Stdin-DataAvailable)) {
         if ([BabaeWin]::PollRightClick($script:consoleHandle)) {
           Paste-Text (Get-ClipboardText)
           continue
@@ -1232,10 +1294,8 @@ function Edit-Babae {
         continue
       }
 
-      # Non-blocking: skip the Read-NextInputEvent call if nothing is ready.
-      # Console.KeyAvailable reflects the same underlying fd as our stdin
-      # stream, so this correctly signals when bytes are waiting.
-      if (-not [Console]::KeyAvailable -and $script:inputPending.Count -eq 0) {
+      # Non-blocking: skip Read-NextInputEvent when nothing is waiting.
+      if (-not (Stdin-DataAvailable)) {
         Start-Sleep -Milliseconds $script:frameDelayMs
         continue
       }

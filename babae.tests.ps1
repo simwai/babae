@@ -81,11 +81,14 @@ BeforeAll {
 
   # Save + quit the editor and wait for it to exit.
   function Close-Editor($s) {
-    Send-Ctrl $s 'S'          # Ctrl+S  → save
+    # Wrap every write in try/catch: if the editor already exited cleanly
+    # (e.g. Ctrl+Q with no unsaved changes), the pipe is gone and writes
+    # throw a broken-pipe error — that is fine, we just stop sending.
+    try { Send-Ctrl $s 'S' } catch {}
     Start-Sleep -Milliseconds 200
-    Send-Ctrl $s 'Q'          # Ctrl+Q  → quit (no unsaved = clean exit)
+    try { Send-Ctrl $s 'Q' } catch {}
     Start-Sleep -Milliseconds 200
-    Send-Str $s 'Y'           # Y       → confirm if dirty dialog appears
+    try { Send-Str $s 'Y' } catch {}  # confirm if dirty-quit dialog appears
     Wait-Editor $s
   }
 }
@@ -110,7 +113,7 @@ Describe 'BPM byte-sequence helpers' {
     $payload = "    line1`n    line2`n    line3"
     $bytes   = New-BpmBytes $payload
     $str     = [System.Text.Encoding]::UTF8.GetString($bytes)
-    $str | Should -BeLike "*`e[200~*line1*line2*line3*`e[201~"
+    $str | Should -Match ('(?s)' + [regex]::Escape("`e[200~") + '.*line1.*line2.*line3.*' + [regex]::Escape("`e[201~"))
   }
 }
 
