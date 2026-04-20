@@ -603,6 +603,9 @@ public static class BabaeWin {
     public const uint MOUSE_INPUT = 0x0010;
     public const uint QUICK_EDIT = 0x0040;
     public const uint EXTENDED_FLAGS = 0x0080;
+    public const uint ENABLE_ECHO_INPUT = 0x0004;
+    public const uint ENABLE_LINE_INPUT = 0x0002;
+    public const uint ENABLE_PROCESSED_INPUT = 0x0001;
     const ushort MOUSE_EVENT_TYPE = 0x0002;
     const uint RIGHT_BTN_PRESSED = 0x0002;
     public static IntPtr GetHandle() { return GetStdHandle(STD_INPUT); }
@@ -624,7 +627,7 @@ public static class BabaeWin {
 '@ -ErrorAction SilentlyContinue
     $script:consoleHandle = [BabaeWin]::GetHandle()
     $script:origConsoleMode = [BabaeWin]::GetMode($script:consoleHandle)
-    $newMode = ($script:origConsoleMode -bor [BabaeWin]::MOUSE_INPUT -bor [BabaeWin]::EXTENDED_FLAGS) -band (-bnot [BabaeWin]::QUICK_EDIT)
+    $newMode = ($script:origConsoleMode -bor [BabaeWin]::MOUSE_INPUT -bor [BabaeWin]::EXTENDED_FLAGS) -band (-bnot [BabaeWin]::QUICK_EDIT) -band (-bnot [BabaeWin]::ENABLE_ECHO_INPUT) -band (-bnot [BabaeWin]::ENABLE_LINE_INPUT)
     [BabaeWin]::SetModeValue($script:consoleHandle, $newMode)
     $script:mouseEnabled = $true
   } catch {}
@@ -1278,6 +1281,7 @@ function Edit-Babae {
 
   $oldCtrlC = [Console]::TreatControlCAsInput
   [Console]::TreatControlCAsInput = $true
+  if (-not ($IsWindows -or $env:OS -eq 'Windows_NT')) { try { stty -echo } catch {} }
   # Enable bracketed paste mode (ESC[?2004h).  With this the terminal wraps
   # every right-click / middle-click paste in ESC[200~...ESC[201~ sentinels.
   # Our raw stdin reader picks those up and routes the payload directly to
@@ -1339,6 +1343,7 @@ function Edit-Babae {
     if ($script:mouseEnabled) {
       try { [BabaeWin]::SetModeValue($script:consoleHandle, $script:origConsoleMode) } catch {}
     }
+    if (-not ($IsWindows -or $env:OS -eq 'Windows_NT')) { try { stty echo } catch {} }
     [Console]::TreatControlCAsInput = $oldCtrlC
     # Disable bracketed paste mode before handing the terminal back.
     Out-Flush("`e[?2004l`e[?25h`e[2J`e[H`e[0m")
