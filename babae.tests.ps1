@@ -310,3 +310,31 @@ Describe 'Ctrl+V clipboard paste is unaffected' {
     } finally { Remove-Item $out -Force -ErrorAction SilentlyContinue }
   }
 }
+Describe 'Chunked BPM sequence handling' {
+    It 'should explicitly keep the read loop open if a bracketed paste sentinel arrives in chunks across 100ms' {
+        $out = [IO.Path]::GetTempFileName()
+        try {
+            $s = Start-BabaeProcess $out
+            Start-Sleep -Milliseconds 700
+
+            # ESC [ 2
+            Send-Bytes $s @(27, 91, 50)
+            Start-Sleep -Milliseconds 100
+            # 0 0 ~
+            Send-Bytes $s @(48, 48, 126)
+
+            Send-Str $s "chunked text"
+
+            # ESC [ 2 0 1 ~
+            Send-Bytes $s @(27, 91, 50, 48, 49, 126)
+            Start-Sleep -Milliseconds 300
+
+            Close-Editor $s
+
+            $saved = [IO.File]::ReadAllText($out) -replace "`r`n","`n" -replace "`r","`n"
+            $saved.Trim() | Should -Be 'chunked text'
+        } finally {
+            Remove-Item $out -Force -ErrorAction SilentlyContinue
+        }
+    }
+}

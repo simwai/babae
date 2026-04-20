@@ -31,7 +31,7 @@ $script:debugLog = $null
 if ($DebugLog.IsPresent) {
   $script:debugLog = Join-Path . 'babae-debug.log'
 }
-Write-Host $script:debugLog
+if ($DebugLog.IsPresent) { Write-DebugLog "=== Session Started ===" }
 
 # ---------------------------------------------------------------------------
 # Themes
@@ -277,7 +277,7 @@ function Read-NextInputEvent {
     if ($script:inputPending.Count -eq 0) {
       # Nothing arrived yet — wait up to 50 ms for an escape sequence.
       $w = 0
-      while ($script:inputPending.Count -eq 0 -and $w -lt 50) {
+      while ($script:inputPending.Count -eq 0 -and $w -lt 150) {
         Start-Sleep -Milliseconds 5; $w += 5
         Stdin-PeekAvailable
       }
@@ -292,7 +292,15 @@ function Read-NextInputEvent {
     $seqBuf = [System.Text.StringBuilder]::new()
     $maxSeqLen = 12  # longest sequence we care about is '1;2D' = 4 chars after '['
 
-    while ($script:inputPending.Count -gt 0 -and $seqBuf.Length -lt $maxSeqLen) {
+    while ($seqBuf.Length -lt $maxSeqLen) {
+      if ($script:inputPending.Count -eq 0) {
+        $w2 = 0
+        while ($script:inputPending.Count -eq 0 -and $w2 -lt 50) {
+          Start-Sleep -Milliseconds 5; $w2 += 5
+          Stdin-PeekAvailable
+        }
+        if ($script:inputPending.Count -eq 0) { break }
+      }
       $nb = $script:inputPending.Peek()
       $nc = [char]$nb
       # Stop if this byte starts a new, unrelated sequence or is printable.
@@ -318,7 +326,8 @@ function Read-NextInputEvent {
       # A sequence is "potentially continuable" when it starts with [ or O
       # and consists only of digits, semicolons, or letters we handle.
       $couldContinue = ($seq.Length -eq 1 -and ($seq -eq '[' -or $seq -eq 'O')) `
-                    -or ($seq.Length -gt 1 -and $seq[0] -eq '[' -and ($nc -match '[0-9;]'))
+                    -or ($seq.Length -gt 1 -and $seq[0] -eq '[' -and ($nc -match '[0-9;]')) `
+                    -or ('[200~'.StartsWith($seq))
       if (-not $couldContinue) { break }
     }
 
