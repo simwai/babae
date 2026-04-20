@@ -1303,6 +1303,11 @@ function Edit-Babae {
       while ($script:running -and (Stdin-DataAvailable)) {
         $processedInput = $true
         $event = Read-NextInputEvent
+
+        # If we got a partial sequence (NoName), peek for more to avoid delayed rendering.
+        if ($event.Kind -eq 'Key' -and $event.KeyInfo.Key -eq [System.ConsoleKey]::NoName) {
+           Stdin-PeekAvailable
+        }
         if ($event.Kind -eq 'Paste') {
           Paste-Text $event.Text
         } else {
