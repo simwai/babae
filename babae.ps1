@@ -1278,7 +1278,7 @@ function Edit-Babae {
 
   $oldCtrlC = [Console]::TreatControlCAsInput
   [Console]::TreatControlCAsInput = $true
-  if (-not ($IsWindows -or $env:OS -eq 'Windows_NT')) { try { stty -echo -ixon -ixoff -isig } catch {} }
+  if (-not ($IsWindows -or $env:OS -eq 'Windows_NT')) { try { stty -echo -icanon -isig -ixon -ixoff } catch {} }
   # Enable bracketed paste mode (ESC[?2004h).  With this the terminal wraps
   # every right-click / middle-click paste in ESC[200~...ESC[201~ sentinels.
   # Our raw stdin reader picks those up and routes the payload directly to
@@ -1299,48 +1299,48 @@ function Edit-Babae {
         Reset-RenderShadow
       }
 
-      Update-Scroll
-      Render-Frame
-
-      # Windows-only: poll for right-click paste via Win32 mouse events.
-      if ($script:mouseEnabled -and -not (Stdin-DataAvailable)) {
-        if ([BabaeWin]::PollRightClick($script:consoleHandle)) {
-          Paste-Text (Get-ClipboardText)
-          continue
+      $processedInput = $false
+      while ($script:running -and (Stdin-DataAvailable)) {
+        $processedInput = $true
+        $event = Read-NextInputEvent
+        if ($event.Kind -eq 'Paste') {
+          Paste-Text $event.Text
+        } else {
+          switch ($state.Mode) {
+            'edit'         { Handle-EditKey $event.KeyInfo }
+            'search'       { Handle-SearchKey $event.KeyInfo }
+            'confirm-quit' { Handle-ConfirmQuitKey $event.KeyInfo }
+          }
         }
-        Start-Sleep -Milliseconds $script:frameDelayMs
-        continue
+        ClampCursor
       }
 
-      # Non-blocking: skip Read-NextInputEvent when nothing is waiting.
-      if (-not (Stdin-DataAvailable)) {
-        Start-Sleep -Milliseconds $script:frameDelayMs
-        continue
+      if ($processedInput -or $prevWidth -eq 0) {
+        Update-Scroll
+        Render-Frame
       }
-
-      # Read one complete input event (key or paste) from raw stdin.
-      $event = Read-NextInputEvent
-
-      if ($event.Kind -eq 'Paste') {
-        Paste-Text $event.Text
-      } else {
-        switch ($state.Mode) {
-          'edit'         { Handle-EditKey $event.KeyInfo }
-          'search'       { Handle-SearchKey $event.KeyInfo }
-          'confirm-quit' { Handle-ConfirmQuitKey $event.KeyInfo }
-        }
-      }
-      ClampCursor
 
       if ($state.Mode -eq 'confirm-quit') {
         if ($state.Dirty) { Render-ConfirmQuit } else { $script:running = $false; continue }
+      }
+
+      if ($script:mouseEnabled) {
+        if ([BabaeWin]::PollRightClick($script:consoleHandle)) {
+          Paste-Text (Get-ClipboardText)
+          Update-Scroll
+          Render-Frame
+        }
+      }
+
+      if ($script:running -and -not (Stdin-DataAvailable)) {
+        Start-Sleep -Milliseconds $script:frameDelayMs
       }
     }
   } finally {
     if ($script:mouseEnabled) {
       try { [BabaeWin]::SetModeValue($script:consoleHandle, $script:origConsoleMode) } catch {}
     }
-    if (-not ($IsWindows -or $env:OS -eq 'Windows_NT')) { try { stty echo ixon ixoff isig } catch {} }
+    if (-not ($IsWindows -or $env:OS -eq 'Windows_NT')) { try { stty echo icanon isig ixon ixoff } catch {} }
     [Console]::TreatControlCAsInput = $oldCtrlC
     # Disable bracketed paste mode before handing the terminal back.
     Out-Flush("`e[?2004l`e[?25h`e[2J`e[H`e[0m")
