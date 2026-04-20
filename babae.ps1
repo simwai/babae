@@ -69,6 +69,240 @@ $BOLD = "`e[1m"
 # ---------------------------------------------------------------------------
 $script:stdoutWriter = [System.IO.StreamWriter]::new([Console]::OpenStandardOutput())
 $script:stdoutWriter.AutoFlush = $false
+
+# ---------------------------------------------------------------------------
+# Raw stdin reader — owns all input so we can parse VT sequences ourselves.
+#
+# WHY: Console.ReadKey goes through .NET's console abstraction, which on
+# older runtimes silently strips the '[' from bracketed-paste sentinels
+# (ESC[200~ → ESC200~) making detection impossible.  Reading the raw byte
+# stream sidesteps that entirely: bytes are bytes, sequences are intact.
+#
+# The reader owns a 4 KiB buffer it fills from the stdin stream.
+# Read-NextInputEvent is the single call site: it blocks until at least one
+# event is ready and returns either:
+#   [PSCustomObject]@{ Kind='Key';   KeyInfo=<ConsoleKeyInfo> }
+#   [PSCustomObject]@{ Kind='Paste'; Text=<string> }
+# ---------------------------------------------------------------------------
+$script:stdinStream  = [Console]::OpenStandardInput()
+$script:inputBuf     = [byte[]]::new(4096)
+$script:inputPending = [System.Collections.Generic.Queue[byte]]::new()
+
+function Stdin-ReadByte {
+  # Return the next byte from the pending queue, blocking if needed.
+  if ($script:inputPending.Count -eq 0) {
+    $n = $script:stdinStream.Read($script:inputBuf, 0, $script:inputBuf.Length)
+    for ($i = 0; $i -lt $n; $i++) { $script:inputPending.Enqueue($script:inputBuf[$i]) }
+  }
+  return $script:inputPending.Dequeue()
+}
+
+function Stdin-PeekAvailable {
+  # Drain any bytes waiting in the OS buffer into the pending queue without blocking.
+  if ($script:stdinStream.CanRead) {
+    while ($true) {
+      # Non-blocking peek: only read if data is actually available.
+      # Stream.ReadByte on an SSH stdin blocks; we use Console.KeyAvailable
+      # as the guard (it reflects the underlying fd, same source).
+      if (-not [Console]::KeyAvailable) { break }
+      $n = $script:stdinStream.Read($script:inputBuf, 0, $script:inputBuf.Length)
+      if ($n -le 0) { break }
+      for ($i = 0; $i -lt $n; $i++) { $script:inputPending.Enqueue($script:inputBuf[$i]) }
+    }
+  }
+}
+
+# Read bytes until we see ESC[201~ or the queue+stream runs dry.
+# Returns the accumulated paste payload as a string.
+function Stdin-DrainPaste {
+  $sb       = [System.Text.StringBuilder]::new()
+  $escBuf   = [System.Text.StringBuilder]::new()  # speculative ESC sequence
+  $inEsc    = $false
+
+  while ($true) {
+    # If queue is empty, wait briefly for more bytes (SSH may segment the payload).
+    if ($script:inputPending.Count -eq 0) {
+      $waited = 0
+      while ($script:inputPending.Count -eq 0 -and $waited -lt 500) {
+        Start-Sleep -Milliseconds 5; $waited += 5
+        Stdin-PeekAvailable
+      }
+      if ($script:inputPending.Count -eq 0) { break }  # timed out
+    }
+
+    $b  = $script:inputPending.Dequeue()
+    $ch = [char]$b
+
+    if (-not $inEsc) {
+      if ($b -eq 27) {           # ESC — might be start of ESC[201~
+        $inEsc = $true
+        $escBuf.Clear() | Out-Null
+      } else {
+        [void]$sb.Append($ch)
+      }
+    } else {
+      [void]$escBuf.Append($ch)
+      $esc = $escBuf.ToString()
+      if ($esc -eq '[201~') {
+        # Confirmed end sentinel — paste complete.
+        $inEsc = $false; break
+      } elseif ('[201~'.StartsWith($esc)) {
+        # Still matching — keep buffering.
+      } else {
+        # False ESC — flush it literally and continue.
+        [void]$sb.Append([char]27)
+        [void]$sb.Append($esc)
+        $inEsc = $false
+      }
+    }
+  }
+  return $sb.ToString()
+}
+
+# Synthesise a ConsoleKeyInfo from a raw char (for plain printable bytes and
+# control bytes that we handle ourselves).
+function Make-KeyInfo([char]$ch, [System.ConsoleKey]$key, [System.ConsoleModifiers]$mods) {
+  return [System.ConsoleKeyInfo]::new($ch, $key, `
+    ($mods -band [System.ConsoleModifiers]::Shift) -ne 0, `
+    ($mods -band [System.ConsoleModifiers]::Alt)   -ne 0, `
+    ($mods -band [System.ConsoleModifiers]::Control) -ne 0)
+}
+
+# Parse a VT escape sequence (everything after the leading ESC) into a
+# ConsoleKeyInfo.  $seq is the chars after ESC, e.g. '[A' for up-arrow.
+function Parse-EscapeSequence([string]$seq) {
+  # CSI sequences: ESC [ ...
+  if ($seq.StartsWith('[')) {
+    $param = $seq.Substring(1)
+    switch ($param) {
+      'A'  { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::UpArrow)    0 }
+      'B'  { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::DownArrow)  0 }
+      'C'  { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::RightArrow) 0 }
+      'D'  { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::LeftArrow)  0 }
+      'H'  { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::Home)       0 }
+      'F'  { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::End)        0 }
+      '1~' { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::Home)       0 }
+      '4~' { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::End)        0 }
+      '5~' { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::PageUp)     0 }
+      '6~' { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::PageDown)   0 }
+      '2~' { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::Insert)     0 }
+      '3~' { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::Delete)     0 }
+      # Shift+arrows (xterm)
+      '1;2A' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::UpArrow)    ([System.ConsoleModifiers]::Shift) }
+      '1;2B' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::DownArrow)  ([System.ConsoleModifiers]::Shift) }
+      '1;2C' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::RightArrow) ([System.ConsoleModifiers]::Shift) }
+      '1;2D' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::LeftArrow)  ([System.ConsoleModifiers]::Shift) }
+    }
+  }
+  # SS3 sequences: ESC O ...
+  if ($seq.StartsWith('O')) {
+    switch ($seq.Substring(1)) {
+      'A' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::UpArrow)    0 }
+      'B' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::DownArrow)  0 }
+      'C' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::RightArrow) 0 }
+      'D' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::LeftArrow)  0 }
+      'H' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::Home)       0 }
+      'F' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::End)        0 }
+    }
+  }
+  # Unknown sequence — return a null-char key so it is silently ignored.
+  return Make-KeyInfo ([char]0) ([System.ConsoleKey]::NoName) 0
+}
+
+# Read one complete input event from stdin.
+# Returns either a Key event or a Paste event.
+function Read-NextInputEvent {
+  $b = Stdin-ReadByte
+
+  # ── Bracketed-paste start: ESC [ 2 0 0 ~ ───────────────────────────────
+  # We detect it at the byte level by reading ahead after an ESC.
+  if ($b -eq 27) {
+    # Peek the next byte; if none arrives quickly this is a bare ESC keypress.
+    Stdin-PeekAvailable
+    if ($script:inputPending.Count -eq 0) {
+      # No follow-up → bare ESC
+      return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Make-KeyInfo ([char]27) ([System.ConsoleKey]::Escape) 0) }
+    }
+
+    # Accumulate the rest of the sequence until it either matches a known
+    # pattern or contains a char that can't continue any sequence.
+    $seqBuf = [System.Text.StringBuilder]::new()
+    $maxSeqLen = 12  # longest sequence we care about is '1;2D' = 4 chars after '['
+
+    while ($script:inputPending.Count -gt 0 -and $seqBuf.Length -lt $maxSeqLen) {
+      $nb = $script:inputPending.Peek()
+      $nc = [char]$nb
+      # Stop if this byte starts a new, unrelated sequence or is printable.
+      if ($nb -eq 27) { break }  # another ESC — stop here
+      [void]$seqBuf.Append($nc)
+      $script:inputPending.Dequeue() | Out-Null
+
+      $seq = $seqBuf.ToString()
+
+      # Bracketed paste start ─────────────────────────────────────────────
+      if ($seq -eq '[200~') {
+        $payload = Stdin-DrainPaste
+        return [PSCustomObject]@{ Kind = 'Paste'; Text = $payload }
+      }
+
+      # Known terminal sequence — stop as soon as it matches ──────────────
+      $ki = Parse-EscapeSequence $seq
+      if ($ki.Key -ne [System.ConsoleKey]::NoName) {
+        return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = $ki }
+      }
+
+      # Keep accumulating if we might still complete a valid sequence.
+      # A sequence is "potentially continuable" when it starts with [ or O
+      # and consists only of digits, semicolons, or letters we handle.
+      $couldContinue = ($seq.Length -eq 1 -and ($seq -eq '[' -or $seq -eq 'O')) `
+                    -or ($seq.Length -gt 1 -and $seq[0] -eq '[' -and ($nc -match '[0-9;]'))
+      if (-not $couldContinue) { break }
+    }
+
+    # Sequence ended without a match — emit ESC + accumulated chars as
+    # individual key events.  Push them back onto the front of the queue.
+    $seqStr = $seqBuf.ToString()
+    # Push the accumulated chars back (in reverse, since Queue.Enqueue goes to back).
+    # Simplest: re-queue the raw bytes, then immediately return the bare ESC.
+    $rawBytes = [System.Text.Encoding]::UTF8.GetBytes($seqStr)
+    # Prepend them to the pending queue by rebuilding it.
+    $tmp = [System.Collections.Generic.Queue[byte]]::new()
+    foreach ($rb in $rawBytes) { $tmp.Enqueue($rb) }
+    foreach ($rb in $script:inputPending) { $tmp.Enqueue($rb) }
+    $script:inputPending = $tmp
+    return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Make-KeyInfo ([char]27) ([System.ConsoleKey]::Escape) 0) }
+  }
+
+  # ── Control bytes ────────────────────────────────────────────────────────
+  switch ($b) {
+    13  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]13)  ([System.ConsoleKey]::Enter)     0) } }
+    127 { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
+    8   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]8)   ([System.ConsoleKey]::Backspace) 0) } }
+    9   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]9)   ([System.ConsoleKey]::Tab)       0) } }
+    27  {}  # handled above
+    # Ctrl+A..Z
+    default {
+      if ($b -ge 1 -and $b -le 26) {
+        $letter = [char]($b + [int][char]'A' - 1)
+        $ck     = [System.ConsoleKey]$letter.ToString()
+        return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]$b) $ck ([System.ConsoleModifiers]::Control)) }
+      }
+    }
+  }
+
+  # ── Printable UTF-8 character ────────────────────────────────────────────
+  # Decode multi-byte sequences.
+  [byte[]]$charBytes = @($b)
+  if ($b -ge 0xC0) {
+    $extra = if ($b -ge 0xF0) { 3 } elseif ($b -ge 0xE0) { 2 } else { 1 }
+    for ($i = 0; $i -lt $extra; $i++) { $charBytes += Stdin-ReadByte }
+  }
+  $ch = [System.Text.Encoding]::UTF8.GetString($charBytes)[0]
+
+  # Map printable to a ConsoleKey — best-effort, editor only uses KeyChar.
+  $ck = try { [System.ConsoleKey]$ch.ToString().ToUpper() } catch { [System.ConsoleKey]::NoName }
+  return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo $ch $ck 0) }
+}
 $script:lastRows = [System.Collections.Generic.List[string]]::new()
 $script:lastCursorRow = -1
 $script:lastCursorCol = -1
@@ -725,7 +959,7 @@ function Show-Help {
   [void]$sb.Append((Move-To ($cr - $state.ScrollRow + 2) ($cc + 6)))
   [void]$sb.Append("`e[?25h")
   Out-Flush($sb.ToString())
-  [Console]::ReadKey($true) | Out-Null
+  Read-NextInputEvent | Out-Null  # consume one event to close the help dialog
   Reset-RenderShadow
 }
 
@@ -964,7 +1198,11 @@ function Edit-Babae {
 
   $oldCtrlC = [Console]::TreatControlCAsInput
   [Console]::TreatControlCAsInput = $true
-  Out-Flush("`e[2J`e[H`e[?25l")
+  # Enable bracketed paste mode (ESC[?2004h).  With this the terminal wraps
+  # every right-click / middle-click paste in ESC[200~...ESC[201~ sentinels.
+  # Our raw stdin reader picks those up and routes the payload directly to
+  # Paste-Text, bypassing the Enter handler and its auto-indent injection.
+  Out-Flush("`e[2J`e[H`e[?25l`e[?2004h")
 
   $prevWidth = 0
   $prevHeight = 0
@@ -983,6 +1221,8 @@ function Edit-Babae {
       Update-Scroll
       Render-Frame
 
+      # Windows-only: poll for right-click paste via Win32 mouse events.
+      # Only fires when Console.KeyAvailable is false (no key in buffer).
       if ($script:mouseEnabled -and -not [Console]::KeyAvailable) {
         if ([BabaeWin]::PollRightClick($script:consoleHandle)) {
           Paste-Text (Get-ClipboardText)
@@ -992,22 +1232,24 @@ function Edit-Babae {
         continue
       }
 
-      if (-not [Console]::KeyAvailable) {
+      # Non-blocking: skip the Read-NextInputEvent call if nothing is ready.
+      # Console.KeyAvailable reflects the same underlying fd as our stdin
+      # stream, so this correctly signals when bytes are waiting.
+      if (-not [Console]::KeyAvailable -and $script:inputPending.Count -eq 0) {
         Start-Sleep -Milliseconds $script:frameDelayMs
         continue
       }
 
-      # Drain entire key buffer before processing — makes paste identical
-      # to typing: same code path, same snapshot-per-char, one render tick.
-      $keyBatch = [System.Collections.Generic.List[System.ConsoleKeyInfo]]::new()
-      $keyBatch.Add([Console]::ReadKey($true))
-      while ([Console]::KeyAvailable) { $keyBatch.Add([Console]::ReadKey($true)) }
+      # Read one complete input event (key or paste) from raw stdin.
+      $event = Read-NextInputEvent
 
-      foreach ($key in $keyBatch) {
+      if ($event.Kind -eq 'Paste') {
+        Paste-Text $event.Text
+      } else {
         switch ($state.Mode) {
-          'edit' { Handle-EditKey $key }
-          'search' { Handle-SearchKey $key }
-          'confirm-quit' { Handle-ConfirmQuitKey $key }
+          'edit'         { Handle-EditKey $event.KeyInfo }
+          'search'       { Handle-SearchKey $event.KeyInfo }
+          'confirm-quit' { Handle-ConfirmQuitKey $event.KeyInfo }
         }
       }
       ClampCursor
@@ -1021,7 +1263,8 @@ function Edit-Babae {
       try { [BabaeWin]::SetModeValue($script:consoleHandle, $script:origConsoleMode) } catch {}
     }
     [Console]::TreatControlCAsInput = $oldCtrlC
-    Out-Flush("`e[?25h`e[2J`e[H`e[0m")
+    # Disable bracketed paste mode before handing the terminal back.
+    Out-Flush("`e[?2004l`e[?25h`e[2J`e[H`e[0m")
     Write-Host 'babae: session ended.' -ForegroundColor Cyan
     if ($state.FilePath) { Write-Host "File : $($state.FilePath)" -ForegroundColor DarkGray }
   }
