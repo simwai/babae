@@ -67,7 +67,7 @@ $BOLD = "`e[1m"
 # ---------------------------------------------------------------------------
 # Low-flicker output: direct stdout stream + row shadow buffer
 # ---------------------------------------------------------------------------
-$script:stdoutWriter = [System.IO.StreamWriter]::new([Console]::OpenStandardOutput())
+$script:stdoutWriter = [System.IO.StreamWriter]::new([Console]::OpenStandardOutput(), [System.Text.Encoding]::UTF8)
 $script:stdoutWriter.AutoFlush = $false
 
 # ---------------------------------------------------------------------------
@@ -90,7 +90,7 @@ $script:inputPending  = [System.Collections.Generic.Queue[byte]]::new()
 
 # Detect once whether stdin is a real console or redirected.
 # We cache this to pick the right non-blocking check in the hot path.
-$script:stdinIsConsole = $IsWindows
+$script:stdinIsConsole = [System.OperatingSystem]::IsWindows()
 try { if ($script:stdinIsConsole) { [void][Console]::KeyAvailable } } catch { $script:stdinIsConsole = $false }
 
 # Single outstanding async read task — ALWAYS reads into the shared inputBuf.
@@ -339,8 +339,9 @@ function Read-NextInputEvent {
   # ── Control bytes ────────────────────────────────────────────────────────
   switch ($b) {
     13  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]13)  ([System.ConsoleKey]::Enter)     0) } }
+    10  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]13)  ([System.ConsoleKey]::Enter)     0) } }
     127 { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
-    8   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]8)   ([System.ConsoleKey]::Backspace) 0) } }
+    8   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
     9   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]9)   ([System.ConsoleKey]::Tab)       0) } }
     27  {}  # handled above
     # Ctrl+A..Z
@@ -360,11 +361,12 @@ function Read-NextInputEvent {
     $extra = if ($b -ge 0xF0) { 3 } elseif ($b -ge 0xE0) { 2 } else { 1 }
     for ($i = 0; $i -lt $extra; $i++) { $charBytes += Stdin-ReadByte }
   }
-  $ch = [System.Text.Encoding]::UTF8.GetString($charBytes)[0]
+  $ch = [System.Text.Encoding]::UTF8.GetString($charBytes)
+  if ($ch.Length -gt 1) { return [PSCustomObject]@{ Kind='Paste'; Text=$ch } }
 
   # Map printable to a ConsoleKey — best-effort, editor only uses KeyChar.
-  $ck = try { [System.ConsoleKey]$ch.ToString().ToUpper() } catch { [System.ConsoleKey]::NoName }
-  return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo $ch $ck 0) }
+  $ck = try { [System.ConsoleKey]$ch.ToUpper() } catch { [System.ConsoleKey]::NoName }
+  return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo $ch[0] $ck 0) }
 }
 $script:lastRows = [System.Collections.Generic.List[string]]::new()
 $script:lastCursorRow = -1
@@ -1261,8 +1263,11 @@ function Edit-Babae {
 
   $oldCtrlC = [Console]::TreatControlCAsInput
   [Console]::TreatControlCAsInput = $true
-  if (-not $IsWindows -and -not [Console]::IsInputRedirected) {
-    try { stty raw -echo -ixon -isig -icanon 2>/dev/null } catch {}
+  if (-not [System.OperatingSystem]::IsWindows() -and -not [Console]::IsInputRedirected) {
+    try {
+      if (Test-Path /dev/tty) { sh -c "stty raw -echo -ixon -isig -icanon < /dev/tty" 2>/dev/null }
+      else { stty raw -echo -ixon -isig -icanon 2>/dev/null }
+    } catch {}
   }
   # Enable bracketed paste mode (ESC[?2004h).  With this the terminal wraps
   # every right-click / middle-click paste in ESC[200~...ESC[201~ sentinels.
@@ -1326,8 +1331,11 @@ function Edit-Babae {
       try { [BabaeWin]::SetModeValue($script:consoleHandle, $script:origConsoleMode) } catch {}
     }
     [Console]::TreatControlCAsInput = $oldCtrlC
-    if (-not $IsWindows -and -not [Console]::IsInputRedirected) {
-      try { stty sane 2>/dev/null } catch {}
+    if (-not [System.OperatingSystem]::IsWindows() -and -not [Console]::IsInputRedirected) {
+      try {
+        if (Test-Path /dev/tty) { sh -c "stty sane < /dev/tty" 2>/dev/null }
+        else { stty sane 2>/dev/null }
+      } catch {}
     }
     # Disable bracketed paste mode before handing the terminal back.
     Out-Flush("`e[?2004l`e[?1049l`e[?25h`e[0m")
