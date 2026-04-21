@@ -31,7 +31,7 @@ $script:debugLog = $null
 if ($DebugLog.IsPresent) {
   $script:debugLog = Join-Path . 'babae-debug.log'
 }
-Write-Host $script:debugLog
+  # Write-Host $script:debugLog
 
 # ---------------------------------------------------------------------------
 # Themes
@@ -1261,14 +1261,14 @@ function Edit-Babae {
 
   $oldCtrlC = [Console]::TreatControlCAsInput
   [Console]::TreatControlCAsInput = $true
-  if (-not $IsWindows -and (Get-Command stty -ErrorAction SilentlyContinue)) {
+  if (-not $IsWindows -and -not [Console]::IsInputRedirected) {
     try { stty raw -echo -ixon -isig -icanon 2>/dev/null } catch {}
   }
   # Enable bracketed paste mode (ESC[?2004h).  With this the terminal wraps
   # every right-click / middle-click paste in ESC[200~...ESC[201~ sentinels.
   # Our raw stdin reader picks those up and routes the payload directly to
   # Paste-Text, bypassing the Enter handler and its auto-indent injection.
-  Out-Flush("`e[2J`e[H`e[?25l`e[?2004h")
+  Out-Flush("`e[?1049h`e[?2004h`e[?25l`e[2J`e[H")
 
   $prevWidth = 0
   $prevHeight = 0
@@ -1326,11 +1326,11 @@ function Edit-Babae {
       try { [BabaeWin]::SetModeValue($script:consoleHandle, $script:origConsoleMode) } catch {}
     }
     [Console]::TreatControlCAsInput = $oldCtrlC
-    if (-not $IsWindows -and (Get-Command stty -ErrorAction SilentlyContinue)) {
+    if (-not $IsWindows -and -not [Console]::IsInputRedirected) {
       try { stty sane 2>/dev/null } catch {}
     }
     # Disable bracketed paste mode before handing the terminal back.
-    Out-Flush("`e[?2004l`e[?25h`e[2J`e[H`e[0m")
+    Out-Flush("`e[?2004l`e[?1049l`e[?25h`e[0m")
     Write-Host 'babae: session ended.' -ForegroundColor Cyan
     if ($state.FilePath) { Write-Host "File : $($state.FilePath)" -ForegroundColor DarkGray }
   }
