@@ -90,8 +90,8 @@ $script:inputPending  = [System.Collections.Generic.Queue[byte]]::new()
 
 # Detect once whether stdin is a real console or redirected.
 # We cache this to pick the right non-blocking check in the hot path.
-$script:stdinIsConsole = $true
-try { [void][Console]::KeyAvailable } catch { $script:stdinIsConsole = $false }
+$script:stdinIsConsole = $IsWindows
+try { if ($script:stdinIsConsole) { [void][Console]::KeyAvailable } } catch { $script:stdinIsConsole = $false }
 
 # Single outstanding async read task — ALWAYS reads into the shared inputBuf.
 # Rule: at most one ReadAsync in flight at any time.  Stdin-PeekAvailable calls
@@ -1261,12 +1261,8 @@ function Edit-Babae {
 
   $oldCtrlC = [Console]::TreatControlCAsInput
   [Console]::TreatControlCAsInput = $true
-  $script:unixSttyState = $null
   if (-not $IsWindows -and (Get-Command stty -ErrorAction SilentlyContinue)) {
-    try {
-      $script:unixSttyState = stty -g
-      stty raw -echo -ixon -isig
-    } catch {}
+    try { stty raw -echo -ixon -isig -icanon 2>/dev/null } catch {}
   }
   # Enable bracketed paste mode (ESC[?2004h).  With this the terminal wraps
   # every right-click / middle-click paste in ESC[200~...ESC[201~ sentinels.
@@ -1330,8 +1326,8 @@ function Edit-Babae {
       try { [BabaeWin]::SetModeValue($script:consoleHandle, $script:origConsoleMode) } catch {}
     }
     [Console]::TreatControlCAsInput = $oldCtrlC
-    if ($null -ne $script:unixSttyState) {
-      try { stty $script:unixSttyState } catch {}
+    if (-not $IsWindows -and (Get-Command stty -ErrorAction SilentlyContinue)) {
+      try { stty sane 2>/dev/null } catch {}
     }
     # Disable bracketed paste mode before handing the terminal back.
     Out-Flush("`e[?2004l`e[?25h`e[2J`e[H`e[0m")
