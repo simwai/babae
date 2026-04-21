@@ -31,7 +31,7 @@ $script:debugLog = $null
 if ($DebugLog.IsPresent) {
   $script:debugLog = Join-Path . 'babae-debug.log'
 }
-  # Write-Host $script:debugLog
+# Write-Host $script:debugLog
 
 # ---------------------------------------------------------------------------
 # Themes
@@ -338,10 +338,10 @@ function Read-NextInputEvent {
 
   # ── Control bytes ────────────────────────────────────────────────────────
   switch ($b) {
-    13  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]13)  ([System.ConsoleKey]::Enter)     0) } }
-    10  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]13)  ([System.ConsoleKey]::Enter)     0) } }
-    127 { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
-    8   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
+    13  { return [PSCustomObject]@{ Kind="Key"; KeyInfo=(Make-KeyInfo ([char]13) ([System.ConsoleKey]::Enter) 0) } }
+    10  { return [PSCustomObject]@{ Kind="Key"; KeyInfo=(Make-KeyInfo ([char]13) ([System.ConsoleKey]::Enter) 0) } }
+    127 { return [PSCustomObject]@{ Kind="Key"; KeyInfo=(Make-KeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
+    8   { return [PSCustomObject]@{ Kind="Key"; KeyInfo=(Make-KeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
     9   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]9)   ([System.ConsoleKey]::Tab)       0) } }
     27  {}  # handled above
     # Ctrl+A..Z
@@ -363,8 +363,6 @@ function Read-NextInputEvent {
   }
   $ch = [System.Text.Encoding]::UTF8.GetString($charBytes)
   if ($ch.Length -gt 1) { return [PSCustomObject]@{ Kind='Paste'; Text=$ch } }
-
-  # Map printable to a ConsoleKey — best-effort, editor only uses KeyChar.
   $ck = try { [System.ConsoleKey]$ch.ToUpper() } catch { [System.ConsoleKey]::NoName }
   return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo $ch[0] $ck 0) }
 }
