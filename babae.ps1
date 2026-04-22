@@ -91,7 +91,7 @@ $script:inputPending  = [System.Collections.Generic.Queue[byte]]::new()
 # Detect once whether stdin is a real console or redirected.
 # We cache this to pick the right non-blocking check in the hot path.
 $script:stdinIsConsole = [System.OperatingSystem]::IsWindows()
-try { if ($script:stdinIsConsole) { [void][Console]::KeyAvailable } } catch { $script:stdinIsConsole = $false }
+try { if ($script:stdinIsConsole) { [void][Console]::KeyAvailable } } catch { $script:stdinIsConsole = [System.OperatingSystem]::IsWindows() }
 
 # Single outstanding async read task — ALWAYS reads into the shared inputBuf.
 # Rule: at most one ReadAsync in flight at any time.  Stdin-PeekAvailable calls
@@ -120,7 +120,7 @@ function Stdin-HarvestTask {
 # Harvests any completed task bytes as a side-effect.
 function Stdin-TryDrain {
   if ($script:inputPending.Count -gt 0) { return $true }
-  if ($script:stdinIsConsole) { return [Console]::KeyAvailable }
+  if ($script:stdinIsConsole) { try { return [Console]::KeyAvailable } catch { $script:stdinIsConsole = $false } }
   Stdin-EnsureTask
   if (-not $script:stdinReadTask.IsCompleted) { return $false }
   [void](Stdin-HarvestTask)
@@ -277,8 +277,8 @@ function Read-NextInputEvent {
     if ($script:inputPending.Count -eq 0) {
       # Nothing arrived yet — wait up to 50 ms for an escape sequence.
       $w = 0
-      while ($script:inputPending.Count -eq 0 -and $w -lt 50) {
-        Start-Sleep -Milliseconds 5; $w += 5
+      while ($script:inputPending.Count -eq 0 -and $w -lt 200) {
+        Start-Sleep -Milliseconds 10; $w += 10
         Stdin-PeekAvailable
       }
     }
@@ -292,7 +292,7 @@ function Read-NextInputEvent {
     $seqBuf = [System.Text.StringBuilder]::new()
     $maxSeqLen = 12  # longest sequence we care about is '1;2D' = 4 chars after '['
 
-    while ($script:inputPending.Count -gt 0 -and $seqBuf.Length -lt $maxSeqLen) {
+    while ($seqBuf.Length -lt $maxSeqLen) { if ($script:inputPending.Count -eq 0) { $w2 = 0; while ($script:inputPending.Count -eq 0 -and $w2 -lt 50) { Start-Sleep -Milliseconds 5; $w2 += 5; Stdin-PeekAvailable } } if ($script:inputPending.Count -eq 0) { break }
       $nb = $script:inputPending.Peek()
       $nc = [char]$nb
       # Stop if this byte starts a new, unrelated sequence or is printable.
@@ -1261,10 +1261,13 @@ function Edit-Babae {
 
   $oldCtrlC = [Console]::TreatControlCAsInput
   [Console]::TreatControlCAsInput = $true
-  if (-not [System.OperatingSystem]::IsWindows() -and -not [Console]::IsInputRedirected) {
+  if (-not [System.OperatingSystem]::IsWindows()) {
     try {
-      if (Test-Path /dev/tty) { sh -c "stty raw -echo -ixon -isig -icanon < /dev/tty" 2>/dev/null }
-      else { stty raw -echo -ixon -isig -icanon 2>/dev/null }
+      # Try several ways to put the terminal into raw mode.
+      $sttyCmd = "stty raw -echo -isig -icanon -ixon -iexten -opost min 1 time 0"
+      foreach ($target in @("<&0", "<&1", "<&2", "< /dev/tty")) { if ($target -eq "< /dev/tty" -and -not (Test-Path /dev/tty)) { continue }; sh -c "$sttyCmd $target" 2>/dev/null }
+
+
     } catch {}
   }
   # Enable bracketed paste mode (ESC[?2004h).  With this the terminal wraps
@@ -1329,10 +1332,10 @@ function Edit-Babae {
       try { [BabaeWin]::SetModeValue($script:consoleHandle, $script:origConsoleMode) } catch {}
     }
     [Console]::TreatControlCAsInput = $oldCtrlC
-    if (-not [System.OperatingSystem]::IsWindows() -and -not [Console]::IsInputRedirected) {
+    if (-not [System.OperatingSystem]::IsWindows()) {
       try {
-        if (Test-Path /dev/tty) { sh -c "stty sane < /dev/tty" 2>/dev/null }
-        else { stty sane 2>/dev/null }
+        foreach ($target in @("<&0", "<&1", "<&2", "< /dev/tty")) { if ($target -eq "< /dev/tty" -and -not (Test-Path /dev/tty)) { continue }; sh -c "stty sane $target" 2>/dev/null }
+
       } catch {}
     }
     # Disable bracketed paste mode before handing the terminal back.
