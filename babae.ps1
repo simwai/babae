@@ -31,7 +31,7 @@ $script:debugLog = $null
 if ($DebugLog.IsPresent) {
   $script:debugLog = Join-Path . 'babae-debug.log'
 }
-Write-Host $script:debugLog
+# Write-Host $script:debugLog
 
 # ---------------------------------------------------------------------------
 # Themes
@@ -67,7 +67,7 @@ $BOLD = "`e[1m"
 # ---------------------------------------------------------------------------
 # Low-flicker output: direct stdout stream + row shadow buffer
 # ---------------------------------------------------------------------------
-$script:stdoutWriter = [System.IO.StreamWriter]::new([Console]::OpenStandardOutput())
+$script:stdoutWriter = [System.IO.StreamWriter]::new([Console]::OpenStandardOutput(), [System.Text.Encoding]::UTF8)
 $script:stdoutWriter.AutoFlush = $false
 
 # ---------------------------------------------------------------------------
@@ -90,8 +90,8 @@ $script:inputPending  = [System.Collections.Generic.Queue[byte]]::new()
 
 # Detect once whether stdin is a real console or redirected.
 # We cache this to pick the right non-blocking check in the hot path.
-$script:stdinIsConsole = $true
-try { [void][Console]::KeyAvailable } catch { $script:stdinIsConsole = $false }
+$script:stdinIsConsole = [System.OperatingSystem]::IsWindows()
+try { if ($script:stdinIsConsole) { [void][Console]::KeyAvailable } } catch { $script:stdinIsConsole = [System.OperatingSystem]::IsWindows() }
 
 # Single outstanding async read task — ALWAYS reads into the shared inputBuf.
 # Rule: at most one ReadAsync in flight at any time.  Stdin-PeekAvailable calls
@@ -120,7 +120,7 @@ function Stdin-HarvestTask {
 # Harvests any completed task bytes as a side-effect.
 function Stdin-TryDrain {
   if ($script:inputPending.Count -gt 0) { return $true }
-  if ($script:stdinIsConsole) { return [Console]::KeyAvailable }
+  if ($script:stdinIsConsole) { try { return [Console]::KeyAvailable } catch { $script:stdinIsConsole = $false } }
   Stdin-EnsureTask
   if (-not $script:stdinReadTask.IsCompleted) { return $false }
   [void](Stdin-HarvestTask)
@@ -277,8 +277,8 @@ function Read-NextInputEvent {
     if ($script:inputPending.Count -eq 0) {
       # Nothing arrived yet — wait up to 50 ms for an escape sequence.
       $w = 0
-      while ($script:inputPending.Count -eq 0 -and $w -lt 50) {
-        Start-Sleep -Milliseconds 5; $w += 5
+      while ($script:inputPending.Count -eq 0 -and $w -lt 200) {
+        Start-Sleep -Milliseconds 10; $w += 10
         Stdin-PeekAvailable
       }
     }
@@ -292,7 +292,7 @@ function Read-NextInputEvent {
     $seqBuf = [System.Text.StringBuilder]::new()
     $maxSeqLen = 12  # longest sequence we care about is '1;2D' = 4 chars after '['
 
-    while ($script:inputPending.Count -gt 0 -and $seqBuf.Length -lt $maxSeqLen) {
+    while ($seqBuf.Length -lt $maxSeqLen) { if ($script:inputPending.Count -eq 0) { $w2 = 0; while ($script:inputPending.Count -eq 0 -and $w2 -lt 50) { Start-Sleep -Milliseconds 5; $w2 += 5; Stdin-PeekAvailable } } if ($script:inputPending.Count -eq 0) { break }
       $nb = $script:inputPending.Peek()
       $nc = [char]$nb
       # Stop if this byte starts a new, unrelated sequence or is printable.
@@ -338,9 +338,10 @@ function Read-NextInputEvent {
 
   # ── Control bytes ────────────────────────────────────────────────────────
   switch ($b) {
-    13  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]13)  ([System.ConsoleKey]::Enter)     0) } }
-    127 { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
-    8   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]8)   ([System.ConsoleKey]::Backspace) 0) } }
+    13  { return [PSCustomObject]@{ Kind="Key"; KeyInfo=(Make-KeyInfo ([char]13) ([System.ConsoleKey]::Enter) 0) } }
+    10  { return [PSCustomObject]@{ Kind="Key"; KeyInfo=(Make-KeyInfo ([char]13) ([System.ConsoleKey]::Enter) 0) } }
+    127 { return [PSCustomObject]@{ Kind="Key"; KeyInfo=(Make-KeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
+    8   { return [PSCustomObject]@{ Kind="Key"; KeyInfo=(Make-KeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
     9   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]9)   ([System.ConsoleKey]::Tab)       0) } }
     27  {}  # handled above
     # Ctrl+A..Z
@@ -360,11 +361,10 @@ function Read-NextInputEvent {
     $extra = if ($b -ge 0xF0) { 3 } elseif ($b -ge 0xE0) { 2 } else { 1 }
     for ($i = 0; $i -lt $extra; $i++) { $charBytes += Stdin-ReadByte }
   }
-  $ch = [System.Text.Encoding]::UTF8.GetString($charBytes)[0]
-
-  # Map printable to a ConsoleKey — best-effort, editor only uses KeyChar.
-  $ck = try { [System.ConsoleKey]$ch.ToString().ToUpper() } catch { [System.ConsoleKey]::NoName }
-  return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo $ch $ck 0) }
+  $ch = [System.Text.Encoding]::UTF8.GetString($charBytes)
+  if ($ch.Length -gt 1) { return [PSCustomObject]@{ Kind='Paste'; Text=$ch } }
+  $ck = try { [System.ConsoleKey]$ch.ToUpper() } catch { [System.ConsoleKey]::NoName }
+  return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo $ch[0] $ck 0) }
 }
 $script:lastRows = [System.Collections.Generic.List[string]]::new()
 $script:lastCursorRow = -1
@@ -1261,11 +1261,20 @@ function Edit-Babae {
 
   $oldCtrlC = [Console]::TreatControlCAsInput
   [Console]::TreatControlCAsInput = $true
+  if (-not [System.OperatingSystem]::IsWindows()) {
+    try {
+      # Try several ways to put the terminal into raw mode.
+      $sttyCmd = "stty raw -echo -isig -icanon -ixon -iexten -opost min 1 time 0"
+      foreach ($target in @("<&0", "<&1", "<&2", "< /dev/tty")) { if ($target -eq "< /dev/tty" -and -not (Test-Path /dev/tty)) { continue }; sh -c "$sttyCmd $target" 2>/dev/null }
+
+
+    } catch {}
+  }
   # Enable bracketed paste mode (ESC[?2004h).  With this the terminal wraps
   # every right-click / middle-click paste in ESC[200~...ESC[201~ sentinels.
   # Our raw stdin reader picks those up and routes the payload directly to
   # Paste-Text, bypassing the Enter handler and its auto-indent injection.
-  Out-Flush("`e[2J`e[H`e[?25l`e[?2004h")
+  Out-Flush("`e[?1049h`e[?2004h`e[?25l`e[2J`e[H")
 
   $prevWidth = 0
   $prevHeight = 0
@@ -1323,8 +1332,14 @@ function Edit-Babae {
       try { [BabaeWin]::SetModeValue($script:consoleHandle, $script:origConsoleMode) } catch {}
     }
     [Console]::TreatControlCAsInput = $oldCtrlC
+    if (-not [System.OperatingSystem]::IsWindows()) {
+      try {
+        foreach ($target in @("<&0", "<&1", "<&2", "< /dev/tty")) { if ($target -eq "< /dev/tty" -and -not (Test-Path /dev/tty)) { continue }; sh -c "stty sane $target" 2>/dev/null }
+
+      } catch {}
+    }
     # Disable bracketed paste mode before handing the terminal back.
-    Out-Flush("`e[?2004l`e[?25h`e[2J`e[H`e[0m")
+    Out-Flush("`e[?2004l`e[?1049l`e[?25h`e[0m")
     Write-Host 'babae: session ended.' -ForegroundColor Cyan
     if ($state.FilePath) { Write-Host "File : $($state.FilePath)" -ForegroundColor DarkGray }
   }
