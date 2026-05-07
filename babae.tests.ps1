@@ -311,3 +311,27 @@ Describe 'Ctrl+V clipboard paste is unaffected' {
     } finally { Remove-Item $out -Force -ErrorAction SilentlyContinue }
   }
 }
+
+
+# ── Content verification test ──────────────────────────────────────────────────
+
+Describe 'Content verification' {
+
+  It 'saves the exact characters that were input' {
+    $out = [IO.Path]::GetTempFileName()
+    try {
+      $s = Start-BabaeProcess $out
+      Start-Sleep -Milliseconds 700
+
+      $testString = "The quick brown fox jumps over the lazy dog"
+      Send-Str $s $testString
+      Start-Sleep -Milliseconds 200
+
+      Close-Editor $s
+
+      $saved = [IO.File]::ReadAllText($out)
+      $saved.Trim() | Should -Be $testString
+
+    } finally { Remove-Item $out -Force -ErrorAction SilentlyContinue }
+  }
+}
