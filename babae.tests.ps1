@@ -45,6 +45,7 @@ BeforeAll {
     $psi.EnvironmentVariables['TERM']           = 'xterm-256color'
     $psi.EnvironmentVariables['TERM_PROGRAM']   = 'bitvise'  # closest approximation
     $psi.EnvironmentVariables['COLORTERM']      = 'truecolor'
+    $psi.EnvironmentVariables['BABAE_SKIP_INSTALL'] = '1'
 
     $proc = [System.Diagnostics.Process]::new()
     $proc.StartInfo = $psi

@@ -21,6 +21,59 @@ param(
   [string]$Theme = "dark"
 )
 
+# ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Global Installation / Update
+# ---------------------------------------------------------------------------
+if (-not [Console]::IsInputRedirected -and -not $Env:BABAE_SKIP_INSTALL) {
+  $installDir = Join-Path $HOME ".babae"
+  $installPath = Join-Path $installDir "babae.ps1"
+  $currentPath = $PSCommandPath
+
+  if ($currentPath -and (Test-Path $currentPath) -and (Resolve-Path $currentPath).Path -ne $installPath) {
+    $shouldUpdate = $false
+    $msg = ""
+    if (-not (Test-Path $installPath)) {
+      $shouldUpdate = $true
+      $msg = " babae is not installed globally. Install to $installPath and add to profile? (y/n): "
+    } else {
+      try {
+        $currentHash = (Get-FileHash $currentPath -Algorithm SHA256).Hash
+        $installHash = (Get-FileHash $installPath -Algorithm SHA256).Hash
+        if ($currentHash -ne $installHash) {
+          $shouldUpdate = $true
+          $msg = " A different version of babae is installed globally. Update it? (y/n): "
+        }
+      } catch {}
+    }
+
+    if ($shouldUpdate) {
+      Write-Host "`n$msg" -NoNewline -ForegroundColor Cyan
+      $choice = Read-Host
+      if ($choice -eq 'y') {
+        if (-not (Test-Path $installDir)) { New-Item -ItemType Directory -Path $installDir -Force | Out-Null }
+        Copy-Item -Path $currentPath -Destination $installPath -Force
+
+        # Update Profile
+        $profileDir = Split-Path $PROFILE
+        if (-not (Test-Path $profileDir)) { New-Item -ItemType Directory -Path $profileDir -Force | Out-Null }
+        if (-not (Test-Path $PROFILE)) { New-Item -ItemType File -Path $PROFILE -Force | Out-Null }
+
+        $funcName = "babae"
+        $funcDef = "`nfunction $funcName { pwsh -NoProfile -File `"$installPath`" @args }`n"
+        $profileContent = Get-Content $PROFILE -Raw -ErrorAction SilentlyContinue
+        if ($null -eq $profileContent -or $profileContent -notlike "*function $funcName {*") {
+          Add-Content -Path $PROFILE -Value $funcDef
+          Write-Host " Added 'babae' function to $PROFILE" -ForegroundColor Green
+        } else {
+          Write-Host " Global 'babae' command updated." -ForegroundColor Green
+        }
+        Write-Host " babae installed/updated successfully at $installPath" -ForegroundColor Green
+        Start-Sleep -Seconds 1
+      }
+    }
+  }
+}
 $ErrorActionPreference = "Stop"
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -250,7 +303,32 @@ function Parse-EscapeSequence([string]$seq) {
       '1;2A' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::UpArrow)    ([System.ConsoleModifiers]::Shift) }
       '1;2B' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::DownArrow)  ([System.ConsoleModifiers]::Shift) }
       '1;2C' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::RightArrow) ([System.ConsoleModifiers]::Shift) }
+            '1;2C' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::RightArrow) ([System.ConsoleModifiers]::Shift) }
       '1;2D' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::LeftArrow)  ([System.ConsoleModifiers]::Shift) }
+
+      # Ctrl+1..9 (CSI u and common xterm variations)
+      '49;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D1) ([System.ConsoleModifiers]::Control) }
+      '50;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D2) ([System.ConsoleModifiers]::Control) }
+      '51;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D3) ([System.ConsoleModifiers]::Control) }
+      '52;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D4) ([System.ConsoleModifiers]::Control) }
+      '53;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D5) ([System.ConsoleModifiers]::Control) }
+      '54;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D6) ([System.ConsoleModifiers]::Control) }
+      '55;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D7) ([System.ConsoleModifiers]::Control) }
+      '56;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D8) ([System.ConsoleModifiers]::Control) }
+      '57;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D9) ([System.ConsoleModifiers]::Control) }
+      '48;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D0) ([System.ConsoleModifiers]::Control) }
+
+      # Alternative xterm sequences for Ctrl+Digit
+      '27;5;49~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D1) ([System.ConsoleModifiers]::Control) }
+      '27;5;50~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D2) ([System.ConsoleModifiers]::Control) }
+      '27;5;51~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D3) ([System.ConsoleModifiers]::Control) }
+      '27;5;52~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D4) ([System.ConsoleModifiers]::Control) }
+      '27;5;53~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D5) ([System.ConsoleModifiers]::Control) }
+      '27;5;54~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D6) ([System.ConsoleModifiers]::Control) }
+      '27;5;55~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D7) ([System.ConsoleModifiers]::Control) }
+      '27;5;56~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D8) ([System.ConsoleModifiers]::Control) }
+      '27;5;57~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D9) ([System.ConsoleModifiers]::Control) }
+      '27;5;48~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D0) ([System.ConsoleModifiers]::Control) }
     }
   }
   # SS3 sequences: ESC O ...
@@ -441,11 +519,16 @@ function Read-NextInputEvent {
 
   # ── Control bytes ────────────────────────────────────────────────────────
   switch ($b) {
+    0   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]0)  ([System.ConsoleKey]::D2)        ([System.ConsoleModifiers]::Control)) } }
     13  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]13)  ([System.ConsoleKey]::Enter)     0) } }
     127 { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
     8   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]8)   ([System.ConsoleKey]::Backspace) 0) } }
     9   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]9)   ([System.ConsoleKey]::Tab)       0) } }
     27  {}  # handled above
+    28  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]28) ([System.ConsoleKey]::D4)        ([System.ConsoleModifiers]::Control)) } }
+    29  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]29) ([System.ConsoleKey]::D5)        ([System.ConsoleModifiers]::Control)) } }
+    30  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]30) ([System.ConsoleKey]::D6)        ([System.ConsoleModifiers]::Control)) } }
+    31  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]31) ([System.ConsoleKey]::D7) ([System.ConsoleModifiers]::Control)) } }
     # Ctrl+A..Z
     default {
       if ($b -ge 1 -and $b -le 26) {
@@ -1361,9 +1444,15 @@ function Edit-Babae {
     BufSet ''
     Load-EditorConfig ''
   }
-
   $oldCtrlC = [Console]::TreatControlCAsInput
   [Console]::TreatControlCAsInput = $true
+
+  $script:isUnix = $IsLinux -or $IsMacOS
+  if ($script:isUnix -and -not [Console]::IsInputRedirected) {
+    $script:oldStty = stty -g 2>/dev/null
+    stty raw -echo 2>/dev/null
+  }
+
   Start-InputThread
   # Enable bracketed paste mode (ESC[?2004h).  With this the terminal wraps
   # every right-click / middle-click paste in ESC[200~...ESC[201~ sentinels.
@@ -1428,6 +1517,9 @@ function Edit-Babae {
       try { [BabaeWin]::SetModeValue($script:consoleHandle, $script:origConsoleMode) } catch {}
     }
     [Console]::TreatControlCAsInput = $oldCtrlC
+    if ($script:isUnix -and $script:oldStty -and -not [Console]::IsInputRedirected) {
+      try { stty $script:oldStty 2>/dev/null } catch {}
+    }
     # Disable bracketed paste mode before handing the terminal back.
     Out-Flush("`e[?2004l`e[?1049l`e[?25h`e[0m")
     Write-Host 'babae: session ended.' -ForegroundColor Cyan
