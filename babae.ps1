@@ -68,6 +68,10 @@ $BOLD = "`e[1m"
 # Low-flicker output: direct stdout stream + row shadow buffer
 # ---------------------------------------------------------------------------
 $script:stdoutWriter = [System.IO.StreamWriter]::new([Console]::OpenStandardOutput())
+# Native PowerShell input queue
+$script:inputQueue = [System.Collections.Concurrent.ConcurrentQueue[object]]::new()
+$script:inputPendingKeys = [System.Collections.Generic.Queue[object]]::new()
+$script:inputThread = $null
 $script:stdoutWriter.AutoFlush = $false
 
 # ---------------------------------------------------------------------------
@@ -120,7 +124,7 @@ function Stdin-HarvestTask {
 # Harvests any completed task bytes as a side-effect.
 function Stdin-TryDrain {
   if ($script:inputPending.Count -gt 0) { return $true }
-  if ($script:stdinIsConsole) { return [Console]::KeyAvailable }
+  if ($script:stdinIsConsole) { try { return [Console]::KeyAvailable } catch { $script:stdinIsConsole = $false } }
   Stdin-EnsureTask
   if (-not $script:stdinReadTask.IsCompleted) { return $false }
   [void](Stdin-HarvestTask)
@@ -130,7 +134,10 @@ function Stdin-TryDrain {
 # ── Public API ─────────────────────────────────────────────────────────────────
 
 # Main-loop poll: returns $true when input is ready without blocking.
-function Stdin-DataAvailable { Stdin-TryDrain }
+function Stdin-DataAvailable {
+  if (-not [Console]::IsInputRedirected) { return ($script:inputPendingKeys.Count -gt 0 -or -not $script:inputQueue.IsEmpty) }
+  return Stdin-TryDrain
+}
 
 # Blocking read: returns next byte, or -1 on EOF.
 function Stdin-ReadByte {
@@ -263,7 +270,99 @@ function Parse-EscapeSequence([string]$seq) {
 
 # Read one complete input event from stdin.
 # Returns either a Key event or a Paste event.
+function Start-InputThread {
+  if ([Console]::IsInputRedirected) { return }
+  $script:inputThread = [PowerShell]::Create().AddScript({
+    param($q)
+    try {
+      while ($true) {
+        if ([Console]::KeyAvailable) {
+          $ki = [Console]::ReadKey($true)
+          $q.Enqueue($ki)
+        } else {
+          [System.Threading.Thread]::Sleep(10)
+        }
+      }
+    } catch {}
+  }).AddArgument($script:inputQueue)
+  $script:inputHandle = $script:inputThread.BeginInvoke()
+}
+
+function Stop-InputThread {
+  if ($null -ne $script:inputThread) {
+    try { $script:inputThread.Stop() } catch {}
+    try { $script:inputThread.Dispose() } catch {}
+    $script:inputThread = $null
+  }
+}
+
+function Stdin-DrainPasteInteractive {
+  $sb = [System.Text.StringBuilder]::new()
+  $seq = ""
+  while ($true) {
+    $ki = $null
+    $waited = 0
+    while (-not $script:inputQueue.TryDequeue([ref]$ki) -and $waited -lt 500) {
+      [System.Threading.Thread]::Sleep(5); $waited += 5
+    }
+    if ($null -eq $ki) { break }
+    $ch = $ki.KeyChar
+    if ($ki.Key -eq [System.ConsoleKey]::Escape) {
+      $seq = "`e"
+      continue
+    }
+    if ($seq -ne "") {
+      $seq += $ch
+      if ($seq -eq "`e[201~") { break }
+      if ("`e[201~".StartsWith($seq)) { continue }
+      [void]$sb.Append($seq); $seq = ""
+      continue
+    }
+    [void]$sb.Append($ch)
+  }
+  return $sb.ToString()
+}
+
+function Stdin-ReadKey {
+  if ([Console]::IsInputRedirected) {
+    $b = Stdin-ReadByte
+    if ($b -eq -1) { return $null }
+    return [System.ConsoleKeyInfo]::new([char]$b, 0, $false, $false, $false)
+  }
+  if ($script:inputPendingKeys.Count -gt 0) { return $script:inputPendingKeys.Dequeue() }
+  $ki = $null
+  while (-not $script:inputQueue.TryDequeue([ref]$ki)) {
+    if (-not $script:running) { return $null }
+    [System.Threading.Thread]::Sleep(10)
+  }
+  return $ki
+}
+
 function Read-NextInputEvent {
+  if (-not [Console]::IsInputRedirected) {
+    $ki = Stdin-ReadKey
+    if ($null -eq $ki) { return $null }
+    if ($ki.Key -eq [System.ConsoleKey]::Escape) {
+      $seq = "`e"
+      $seqBufKeys = [System.Collections.Generic.List[object]]::new()
+      $waited = 0
+      while ($seq.Length -lt 6 -and $waited -lt 100) {
+        $nki = $null
+        if ($script:inputQueue.TryDequeue([ref]$nki)) {
+          $seq += $nki.KeyChar
+          $seqBufKeys.Add($nki)
+          if ($seq -eq "`e[200~") { return [PSCustomObject]@{ Kind = "Paste"; Text = Stdin-DrainPasteInteractive } }
+          if (-not "`e[200~".StartsWith($seq)) {
+            foreach ($k in $seqBufKeys) { $script:inputPendingKeys.Enqueue($k) }
+            break
+          }
+        } else {
+          [System.Threading.Thread]::Sleep(5); $waited += 5
+        }
+      }
+    }
+    return [PSCustomObject]@{ Kind = "Key"; KeyInfo = $ki }
+  }
   $b = Stdin-ReadByte
   if ($b -eq -1) {
     # EOF — stdin closed (test harness finished sending, or pipe broken).
@@ -1265,11 +1364,12 @@ function Edit-Babae {
 
   $oldCtrlC = [Console]::TreatControlCAsInput
   [Console]::TreatControlCAsInput = $true
+  Start-InputThread
   # Enable bracketed paste mode (ESC[?2004h).  With this the terminal wraps
   # every right-click / middle-click paste in ESC[200~...ESC[201~ sentinels.
   # Our raw stdin reader picks those up and routes the payload directly to
   # Paste-Text, bypassing the Enter handler and its auto-indent injection.
-  Out-Flush("`e[2J`e[H`e[?25l`e[?2004h")
+  Out-Flush("`e[?1049h`e[?2004h`e[?25l`e[2J`e[H")
 
   $prevWidth = 0
   $prevHeight = 0
@@ -1323,12 +1423,13 @@ function Edit-Babae {
       }
     }
   } finally {
+    Stop-InputThread
     if ($script:mouseEnabled) {
       try { [BabaeWin]::SetModeValue($script:consoleHandle, $script:origConsoleMode) } catch {}
     }
     [Console]::TreatControlCAsInput = $oldCtrlC
     # Disable bracketed paste mode before handing the terminal back.
-    Out-Flush("`e[?2004l`e[?25h`e[2J`e[H`e[0m")
+    Out-Flush("`e[?2004l`e[?1049l`e[?25h`e[0m")
     Write-Host 'babae: session ended.' -ForegroundColor Cyan
     if ($state.FilePath) { Write-Host "File : $($state.FilePath)" -ForegroundColor DarkGray }
   }
