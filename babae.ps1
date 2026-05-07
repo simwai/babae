@@ -166,22 +166,26 @@ function Stdin-PeekAvailable {
   }
 }
 
-# Read bytes until we see ESC[201~ or the queue+stream runs dry.
-# Returns the accumulated paste payload as a string.
+# Read bytes until we see ESC[201~ or the deadline expires.
+# Uses a Stopwatch-based deadline with adaptive backoff to avoid penalty
+# stacking when SSH delivers the paste payload in many small TCP segments.
 function Stdin-DrainPaste {
-  $sb       = [System.Text.StringBuilder]::new()
-  $escBuf   = [System.Text.StringBuilder]::new()  # speculative ESC sequence
-  $inEsc    = $false
+  $sb     = [System.Text.StringBuilder]::new(4096)
+  $escBuf = [System.Text.StringBuilder]::new()
+  $inEsc  = $false
 
-  while ($true) {
-    # If queue is empty, wait briefly for more bytes (SSH may segment the payload).
+  $deadline = [System.Diagnostics.Stopwatch]::StartNew()
+
+  while ($deadline.ElapsedMilliseconds -lt 2000) {
     if ($script:inputPending.Count -eq 0) {
-      $waited = 0
-      while ($script:inputPending.Count -eq 0 -and $waited -lt 500) {
-        Start-Sleep -Milliseconds 5; $waited += 5
-        Stdin-PeekAvailable
+      Stdin-PeekAvailable
+      if ($script:inputPending.Count -eq 0) {
+        # Adaptive sleep: 2ms initially, grows to 20ms max as time passes.
+        # Avoids fixed 5ms penalty per SSH segment while still yielding the thread.
+        $sleep = [Math]::Min(20, [Math]::Max(2, [int]($deadline.ElapsedMilliseconds / 50)))
+        Start-Sleep -Milliseconds $sleep
+        continue
       }
-      if ($script:inputPending.Count -eq 0) { break }  # timed out
     }
 
     $b  = [int]$script:inputPending.Dequeue()
@@ -591,7 +595,7 @@ function Load-EditorConfig([string]$filePath) {
     foreach ($rawLine in [IO.File]::ReadAllLines($configPath)) {
       $line = $rawLine.Trim()
       if ($line -eq '' -or $line.StartsWith('#') -or $line.StartsWith(';')) { continue }
-      if ($line -match '^\[(.*)\]$') {
+      if ($line -match '^\[(.*)\\]$') {
         $active = Test-EditorConfigSectionMatch $Matches[1].Trim() $relativePath
         continue
       }
