@@ -33,14 +33,14 @@
 
 ## Introduction
 
-babae is a zero-dependency TUI text editor written in pure PowerShell. No NuGet packages, no compiled DLLs, no external binaries — just a single `.ps1` file you can drop anywhere and run. It renders via raw ANSI escape sequences, reads input at the byte level, and speaks `.editorconfig`.
+babae is a zero-dependency TUI text editor written in pure PowerShell. No NuGet packages, no compiled DLLs, no external binaries — just a single `.ps1` file you can drop anywhere and run. It renders via raw ANSI escape sequences, handles input via bracketed paste mode (BPM), and speaks `.editorconfig`.
 
 Its primary reason for existence: most terminal editors misbehave when pasting indented text over SSH in Bitvise (xterm-256color). babae fixes that at the input layer.
 
 ## Key Features
 
 - **Zero Dependencies**: One file. `pwsh ./babae.ps1`. Done.
-- **SSH-Safe Paste**: Raw stdin byte reader with bracketed paste mode (BPM) support. Right-click paste over SSH does not staircase — ever. See [The Stairway Paste Fix](#the-stairway-paste-fix).
+- **SSH-Safe Paste**: Bracketed paste mode (BPM) support across both interactive and redirected stdin paths. Right-click paste over SSH does not staircase — ever. See [The Stairway Paste Fix](#the-stairway-paste-fix).
 - **ANSI TUI Rendering**: Low-flicker frame rendering via a shadow row buffer and direct stdout stream writes. Only changed rows are redrawn.
 - **Four Dark Themes**: babae dark, Catppuccin Mocha, Catppuccin Frappe, GitHub Dark. Cycle with `^T`.
 - **Undo / Redo**: Snapshot-based undo stack (up to 200 entries) with `^Z` / `^Y`.
@@ -160,11 +160,15 @@ babae automatically displays a language label in the header bar based on the ope
 
 When pasting multi-line indented text via right-click over SSH (Bitvise, xterm-256color), every `\n` in the paste stream used to hit the `Enter` handler, which re-injected the current line's leading whitespace — compounding it on every successive line and producing an ever-widening staircase of indentation.
 
-This is an [open bug in micro](https://github.com/micro-editor/micro/issues/3571) and stems from using `Console.ReadKey`, which silently strips the `[` from bracketed-paste sentinels (`ESC[200~` → `ESC200~`) on older .NET runtimes ([dotnet/runtime#60101](https://github.com/dotnet/runtime/issues/60101)).
+This is an [open bug in micro](https://github.com/micro-editor/micro/issues/3571) and stems from editors not properly handling bracketed paste mode (BPM) sentinels (`ESC[200~` / `ESC[201~`), which terminals use to wrap paste payloads so editors can distinguish pasted text from typed input.
 
-babae sidesteps this entirely by reading `Console.OpenStandardInput()` as raw bytes. Bytes are bytes regardless of runtime or SSH layer. BPM sentinels are detected at the byte level, and the paste payload is routed directly to the insert routine — bypassing the `Enter` handler and its auto-indent logic completely.
+babae fixes this by enabling BPM (`ESC[?2004h`) on launch and running a **dual-path input architecture**:
 
-Nano uses the same principle (raw `read()` syscall). babae brings it to pure PowerShell.
+- **Interactive mode** (normal terminal use): a background PowerShell runspace reads keys via `[Console]::ReadKey($true)` and pushes them into a `ConcurrentQueue`. When an ESC is detected, babae peeks ahead in the queue to assemble the full sequence. If `ESC[200~` is matched, the paste payload is drained via `Stdin-DrainPasteInteractive` — consuming chars until `ESC[201~` — and routed directly to the insert routine, bypassing the `Enter` handler and its auto-indent logic entirely.
+
+- **Redirected mode** (test harness / piped stdin): babae falls back to reading `Console.OpenStandardInput()` as a raw byte stream. BPM sentinels are detected at the byte level in `Stdin-DrainPaste`, making the test suite independent of any terminal or .NET console abstraction.
+
+In both paths, the paste payload never touches the `Enter` handler. No staircase.
 
 ## Testing
 
