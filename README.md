@@ -19,9 +19,11 @@
 - [Environment Setup Guide](#environment-setup-guide)
   * [1. Install PowerShell 7+](#1-install-powershell-7)
   * [2. Download babae](#2-download-babae)
+- [Global Install](#global-install)
 - [Usage Guide](#usage-guide)
   * [Keybindings](#keybindings)
 - [Themes](#themes)
+- [Language Detection](#language-detection)
 - [The Stairway Paste Fix](#the-stairway-paste-fix)
 - [Testing](#testing)
 
@@ -40,12 +42,14 @@ Its primary reason for existence: most terminal editors misbehave when pasting i
 - **Zero Dependencies**: One file. `pwsh ./babae.ps1`. Done.
 - **SSH-Safe Paste**: Raw stdin byte reader with bracketed paste mode (BPM) support. Right-click paste over SSH does not staircase — ever. See [The Stairway Paste Fix](#the-stairway-paste-fix).
 - **ANSI TUI Rendering**: Low-flicker frame rendering via a shadow row buffer and direct stdout stream writes. Only changed rows are redrawn.
-- **Four Dark Themes**: babae dark, Catppuccin Mocha, Catppuccin Frappe, GitHub Dark. Cycle with `^1`.
+- **Four Dark Themes**: babae dark, Catppuccin Mocha, Catppuccin Frappe, GitHub Dark. Cycle with `^T`.
 - **Undo / Redo**: Snapshot-based undo stack (up to 200 entries) with `^Z` / `^Y`.
 - **Incremental Search**: Live highlighting across the buffer with `^F`.
-- **Cross-Platform Clipboard**: `^C` / `^V` via `xclip` / `xdotool` on Linux, `pbcopy` / `pbpaste` on macOS, `Set-Clipboard` on Windows.
+- **Cross-Platform Clipboard**: `^C` / `^V` via `xclip` / `xsel` / `wl-copy` on Linux (X11 and Wayland), `pbcopy` / `pbpaste` on macOS, `System.Windows.Forms.Clipboard` on Windows.
 - **`.editorconfig` Support**: Picks up `indent_style`, `indent_size`, `end_of_line`, `trim_trailing_whitespace`, `insert_final_newline`, and `charset` from the nearest `.editorconfig`.
 - **Mouse Right-Click Paste on Windows**: Win32 console API integration for native right-click paste events.
+- **Language Detection**: Automatic language label in the header based on file extension (see [Language Detection](#language-detection)).
+- **Global Install**: On first run outside `~/.babae/`, babae offers to install itself globally and register a `babae` shell function in your PowerShell profile.
 
 ## Environment Setup Guide
 
@@ -74,6 +78,22 @@ curl -O https://raw.githubusercontent.com/simwai/babae/main/babae.ps1
 
 That is the entire installation.
 
+## Global Install
+
+On first run, if babae detects it is not already running from `~/.babae/babae.ps1`, it will prompt:
+
+```
+babae is not installed globally. Install to ~/.babae/babae.ps1 and add to profile? (y/n):
+```
+
+Answering `y` copies `babae.ps1` to `~/.babae/` and appends a `babae` function to your `$PROFILE`, so you can launch it from anywhere with:
+
+```pwsh
+babae myfile.txt
+```
+
+If a different version is already installed, the same prompt appears offering to update it. Set `$Env:BABAE_SKIP_INSTALL = 1` to suppress this check entirely.
+
 ## Usage Guide
 
 ```bash
@@ -99,14 +119,17 @@ pwsh ./babae.ps1 myfile.txt -Theme mocha
 | `^A` | Select all |
 | `^C` | Copy selection (or current line) |
 | `^V` | Paste from clipboard |
-| `^1` | Cycle theme |
-| `^2` | Help |
+| `^T` | Cycle theme |
+| `^H` | Help |
 | `Arrow keys` | Move cursor |
+| `Shift+Arrows` | Extend selection |
 | `Home` / `End` | Start / end of line |
 | `PgUp` / `PgDn` | Scroll by screen |
 | `Backspace` / `Del` | Delete character |
 | `Enter` | New line with auto-indent |
 | `Tab` | Insert indent (space or tab per `.editorconfig`) |
+| `Esc` | Cancel search / clear selection |
+| `RightClick` | Paste from clipboard (Windows only) |
 
 ## Themes
 
@@ -116,6 +139,22 @@ pwsh ./babae.ps1 myfile.txt -Theme mocha
 | `mocha` | Catppuccin Mocha |
 | `frappe` | Catppuccin Frappe |
 | `github-dark` | GitHub Dark |
+
+## Language Detection
+
+babae automatically displays a language label in the header bar based on the opened file's extension. No configuration needed.
+
+| Extension(s) | Language |
+|---|---|
+| `.ps1`, `.psm1`, `.psd1` | PowerShell |
+| `.cs` | C# |
+| `.ts`, `.tsx` | TypeScript |
+| `.js`, `.jsx` | JavaScript |
+| `.py` | Python |
+| `.json` | JSON |
+| `.md` | Markdown |
+| `.sh`, `.bash` | Bash |
+| *(anything else)* | Plain Text |
 
 ## The Stairway Paste Fix
 
