@@ -412,6 +412,11 @@ function Stdin-ReadKey {
     if (-not $script:running) { return $null }
     [System.Threading.Thread]::Sleep(10)
   }
+  # Console.ReadKey maps Ctrl+H (byte 8) to Key=Backspace — remap it so
+  # Handle-EditKey sees Key=H with Control modifier, matching the raw-path behaviour.
+  if ([int]$ki.KeyChar -eq 8) {
+    return Make-KeyInfo ([char]8) ([System.ConsoleKey]::H) ([System.ConsoleModifiers]::Control)
+  }
   return $ki
 }
 
