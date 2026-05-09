@@ -303,7 +303,6 @@ function Parse-EscapeSequence([string]$seq) {
       '1;2A' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::UpArrow)    ([System.ConsoleModifiers]::Shift) }
       '1;2B' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::DownArrow)  ([System.ConsoleModifiers]::Shift) }
       '1;2C' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::RightArrow) ([System.ConsoleModifiers]::Shift) }
-            '1;2C' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::RightArrow) ([System.ConsoleModifiers]::Shift) }
       '1;2D' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::LeftArrow)  ([System.ConsoleModifiers]::Shift) }
 
       # Ctrl+1..9 (CSI u and common xterm variations)
@@ -522,7 +521,8 @@ function Read-NextInputEvent {
     0   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]0)  ([System.ConsoleKey]::D2)        ([System.ConsoleModifiers]::Control)) } }
     13  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]13)  ([System.ConsoleKey]::Enter)     0) } }
     127 { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
-    8   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]8)   ([System.ConsoleKey]::Backspace) 0) } }
+    # Ctrl+H (byte 8) → open Help. Backspace uses byte 127 (DEL) on xterm/Bitvise.
+    8   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]8) ([System.ConsoleKey]::H) ([System.ConsoleModifiers]::Control)) } }
     9   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]9)   ([System.ConsoleKey]::Tab)       0) } }
     27  {}  # handled above
     28  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]28) ([System.ConsoleKey]::D4)        ([System.ConsoleModifiers]::Control)) } }
@@ -593,7 +593,7 @@ $script:ec = @{
 }
 # Single source of truth for all keybindings — consumed by status bar + help dialog
 $script:commands = @(
-  [PSCustomObject]@{ Key = '^1'; Label = 'Theme' }
+  [PSCustomObject]@{ Key = '^T'; Label = 'Theme' }
   [PSCustomObject]@{ Key = '^S'; Label = 'Save' }
   [PSCustomObject]@{ Key = '^Q'; Label = 'Quit' }
   [PSCustomObject]@{ Key = '^F'; Label = 'Find' }
@@ -602,7 +602,7 @@ $script:commands = @(
   [PSCustomObject]@{ Key = '^A'; Label = 'Select all' }
   [PSCustomObject]@{ Key = '^C'; Label = 'Copy' }
   [PSCustomObject]@{ Key = '^V'; Label = 'Paste' }
-  [PSCustomObject]@{ Key = '^2'; Label = 'Help' }
+  [PSCustomObject]@{ Key = '^H'; Label = 'Help' }
 )
 
 
@@ -678,7 +678,7 @@ function Load-EditorConfig([string]$filePath) {
     foreach ($rawLine in [IO.File]::ReadAllLines($configPath)) {
       $line = $rawLine.Trim()
       if ($line -eq '' -or $line.StartsWith('#') -or $line.StartsWith(';')) { continue }
-      if ($line -match '^\[(.*)\\]$') {
+      if ($line -match '^\[(.*)\]$') {
         $active = Test-EditorConfigSectionMatch $Matches[1].Trim() $relativePath
         continue
       }
@@ -1059,7 +1059,7 @@ function Build-EditorRow([int]$rowIndex, [int]$screenWidth, [int]$textWidth) {
       $pad = [Math]::Max(0, $screenWidth - $plain.Length)
       return "$(T 'bgBar')$(T 'fgAccent')${BOLD} Search:$RESET$(T 'bgBar')$(T 'fgNorm') $($state.SearchBuf)_ $(T 'fgMuted')(Enter=jump Esc=cancel)$(' ' * $pad)$RESET"
     }
-    $barCmds = $script:commands | Where-Object { $_.Key -in '^1', '^S', '^Q', '^F', '^Z', '^2' }
+    $barCmds = $script:commands | Where-Object { $_.Key -in '^T', '^S', '^Q', '^F', '^Z', '^H' }
     $leftPlain = ' ' + (($barCmds | ForEach-Object { "$($_.Key) $($_.Label)" }) -join ' ') + ' '
     $rightPlain = " $eol | $ecHint |$pos"
     if ($msg) { $rightPlain = " $msg |" + $rightPlain }
@@ -1234,7 +1234,7 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
   # ── Ctrl ────────────────────────────────────────────────────────────────
   if ($ctrl) {
     switch ($key) {
-      'D1' {
+      'T' {
         $script:themeIdx = ($script:themeIdx + 1) % $script:themeNames.Count
         $state.Message = " Theme: $($script:themes[$script:themeNames[$script:themeIdx]].name) "
         Reset-RenderShadow; return
@@ -1255,17 +1255,7 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
         Set-ClipboardText $text; $state.Message = ' Copied to clipboard '; return
       }
       'V' { Paste-Text (Get-ClipboardText); return }
-      'D2' { Show-Help; return }
-      'H' {
-        if ($state.SelActive) { State-Snapshot; Delete-Selection; return }
-        if ($state.Cursor -gt 0) {
-          State-Snapshot; $t = BufText
-          BufSet ($t.Substring(0, $state.Cursor - 1) + $t.Substring($state.Cursor))
-          $state.Cursor--
-          $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true
-        }
-        return
-      }
+      'H' { Show-Help; return }
     }
     return
   }
