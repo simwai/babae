@@ -23,6 +23,7 @@
 - [Usage Guide](#usage-guide)
   * [Keybindings](#keybindings)
 - [Themes](#themes)
+- [Word Prediction](#word-prediction)
 - [Language Detection](#language-detection)
 - [The Stairway Paste Fix](#the-stairway-paste-fix)
 - [Testing](#testing)
@@ -45,6 +46,7 @@ Its primary reason for existence: most terminal editors misbehave when pasting i
 - **Four Dark Themes**: babae dark, Catppuccin Mocha, Catppuccin Frappe, GitHub Dark. Cycle with `^T`.
 - **Undo / Redo**: Snapshot-based undo stack (up to 200 entries) with `^Z` / `^Y`.
 - **Incremental Search**: Live highlighting across the buffer with `^F`.
+- **Word Prediction**: Inline n-gram autocomplete that self-trains as you write. Toggle with `^P`. See [Word Prediction](#word-prediction).
 - **Cross-Platform Clipboard**: `^C` / `^V` via `xclip` / `xsel` / `wl-copy` on Linux (X11 and Wayland), `pbcopy` / `pbpaste` on macOS, `System.Windows.Forms.Clipboard` on Windows.
 - **`.editorconfig` Support**: Picks up `indent_style`, `indent_size`, `end_of_line`, `trim_trailing_whitespace`, `insert_final_newline`, and `charset` from the nearest `.editorconfig`.
 - **Mouse Right-Click Paste on Windows**: Win32 console API integration for native right-click paste events.
@@ -116,6 +118,7 @@ pwsh ./babae.ps1 myfile.txt -Theme mocha
 | `^Z` | Undo |
 | `^Y` | Redo |
 | `^F` | Find (incremental search) |
+| `^P` | Toggle word prediction on / off |
 | `^A` | Select all |
 | `^C` | Copy selection (or current line) |
 | `^V` | Paste from clipboard |
@@ -127,8 +130,8 @@ pwsh ./babae.ps1 myfile.txt -Theme mocha
 | `PgUp` / `PgDn` | Scroll by screen |
 | `Backspace` / `Del` | Delete character |
 | `Enter` | New line with auto-indent |
-| `Tab` | Insert indent (space or tab per `.editorconfig`) |
-| `Esc` | Cancel search / clear selection |
+| `Tab` | Accept word prediction / insert indent |
+| `Esc` | Cancel search / clear selection / dismiss prediction |
 | `RightClick` | Paste from clipboard (Windows only) |
 
 ## Themes
@@ -139,6 +142,34 @@ pwsh ./babae.ps1 myfile.txt -Theme mocha
 | `mocha` | Catppuccin Mocha |
 | `frappe` | Catppuccin Frappe |
 | `github-dark` | GitHub Dark |
+
+## Word Prediction
+
+babae includes an inline n-gram word predictor — **disabled by default**. Press `^P` to toggle it on or off at any time.
+
+### How It Works
+
+When enabled, after you finish a word and press Space, babae looks at the last two words you typed and suggests the most statistically likely next word. The suggestion appears as dimmed ghost text immediately after your cursor:
+
+```
+The quick brown |fox         ← ghost text shown in muted colour
+```
+
+Press **Tab** to accept the suggestion (it is inserted into the buffer). Any navigation key or continued typing dismisses it.
+
+### Training
+
+The predictor is seeded at startup with ~80 common English and code-related trigrams so it produces useful suggestions immediately. It also self-trains from the current line as you write — the longer you type in a session, the more personalised the suggestions become.
+
+No files are written. The model lives only in memory for the duration of the session.
+
+### Design Notes
+
+- Pure PowerShell — no DLLs, no Python, no network calls
+- O(1) lookup via a typed `Dictionary<string, Dictionary<string, int>>`
+- Suggestion latency: <1 ms on all platforms including SSH sessions
+- Ghost text is render-only; the buffer is never modified until Tab is pressed
+- Works identically in interactive and redirected (test harness) mode
 
 ## Language Detection
 
