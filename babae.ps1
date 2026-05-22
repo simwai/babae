@@ -1,1 +1,1 @@
-$(cat /tmp/babae_patched.ps1)
+<CONTENT_PLACEHOLDER>
