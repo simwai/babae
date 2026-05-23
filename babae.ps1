@@ -2,7 +2,7 @@
 .SYNOPSIS
     babae - The Zero-Lag, SSH-Safe, TUI Editor
 .DESCRIPTION
-    Pure PowerShell TUI editor. No dependencies, no NuGet, no DLLs.
+    Pure PowerShell (7+) TUI editor. Zero dependencies, SSH-safe, cross-platform.
     ANSI rendering, dark themes, cross-platform clipboard, .editorconfig support.
 .NOTES
     PS installation: https://learn.microsoft.com/en-us/powershell/scripting/install/install-ubuntu?view=powershell-7.6
@@ -113,6 +113,7 @@ $script:themes = @{
   }
 }
 $script:themeIdx = [Math]::Max(0, $script:themeNames.IndexOf($Theme))
+# Returns the ANSI escape sequence for a theme color key.
 function T([string]$key) { "`e[$($script:themes[$script:themeNames[$script:themeIdx]][$key])m" }
 $RESET = "`e[0m"
 $BOLD = "`e[1m"
@@ -562,11 +563,13 @@ $script:lastCursorRow = -1
 $script:lastCursorCol = -1
 $script:lastCursorVisible = $false
 
+# Writes a string to the standard output stream and flushes it.
 function Out-Flush([string]$text) {
   $script:stdoutWriter.Write($text)
   $script:stdoutWriter.Flush()
 }
 
+# Clears the render shadow buffer to force a full redraw on the next frame.
 function Reset-RenderShadow {
   $script:lastRows.Clear()
   $script:lastCursorRow = -1
@@ -708,6 +711,9 @@ function Load-EditorConfig([string]$filePath) {
   $state.Message = ' .editorconfig loaded '
 }
 
+# ---------------------------------------------------------------------------
+# Indentation & EditorConfig
+# ---------------------------------------------------------------------------
 function Get-IndentString {
   if ($script:ec.indent_style -eq 'tab') { return "`t" }
   return ' ' * [Math]::Max(1, $script:ec.indent_size)
@@ -845,14 +851,20 @@ $state = [PSCustomObject]@{
   SelAnchor    = 0
 }
 
-# ── flat-buffer primitives ───────────────────────────────────────────────────
+# ---------------------------------------------------------------------------
+# Buffer Primitives
+# ---------------------------------------------------------------------------
 
+# Returns the entire buffer content as a string.
 function BufText { $state.Buffer.ToString() }
+# Returns the length of the buffer in characters.
 function BufLen { $state.Buffer.Length }
+# Replaces the entire buffer content with the specified text.
 function BufSet([string]$text) {
   $state.Buffer.Clear() | Out-Null
   if ($text) { $state.Buffer.Append($text) | Out-Null }
 }
+# Ensures the cursor position remains within valid buffer bounds.
 function ClampCursor {
   $state.Cursor = [Math]::Max(0, [Math]::Min($state.Cursor, (BufLen)))
 }
@@ -921,6 +933,7 @@ function SelBounds {
   [Math]::Max($state.SelAnchor, $state.Cursor)
 }
 
+# Resets the editor state to a clean, empty buffer.
 function State-Reset {
   BufSet ''
   $state.Cursor = 0; $state.PreferredCol = 0; $state.ScrollRow = 0
@@ -931,6 +944,7 @@ function State-Reset {
   $state.SelActive = $false; $state.SelAnchor = 0
 }
 
+# Loads a file into the buffer and resets editor state.
 function State-LoadFile([string]$path) {
   $state.FilePath = $path
   $state.Language = Get-Language $path
@@ -941,6 +955,7 @@ function State-LoadFile([string]$path) {
   $state.Cursor = 0; $state.PreferredCol = 0; $state.ScrollRow = 0
 }
 
+# Saves the buffer content to the current file path, respecting EditorConfig settings.
 function State-SaveFile {
   if ([string]::IsNullOrWhiteSpace($state.FilePath)) { $state.Message = ' No path '; return }
   $content = BufText
@@ -961,6 +976,7 @@ function State-SaveFile {
   $state.Dirty = $false; $state.Message = ' Saved '
 }
 
+# Saves a snapshot of the current buffer and cursor to the undo stack.
 function State-Snapshot {
   if ($state.UndoStack.Count -ge 200) {
     $arr = $state.UndoStack.ToArray(); $state.UndoStack.Clear()
@@ -975,6 +991,7 @@ function State-Snapshot {
   $state.RedoStack.Clear()
 }
 
+# Applies a saved snapshot to the editor state and pushes the current state to a redo/undo stack.
 function State-Apply([object]$snap, [System.Collections.Generic.Stack[object]]$target) {
   $target.Push([PSCustomObject]@{
       Buf = BufText; Cursor = $state.Cursor; PCol = $state.PreferredCol
@@ -987,17 +1004,20 @@ function State-Apply([object]$snap, [System.Collections.Generic.Stack[object]]$t
   Reset-RenderShadow
 }
 
+# Reverts the last buffer modification using the undo stack.
 function State-Undo { if ($state.UndoStack.Count -eq 0) { $state.Message = ' Nothing to undo '; return }; State-Apply $state.UndoStack.Pop() $state.RedoStack }
+# Re-applies a previously undone modification using the redo stack.
 function State-Redo { if ($state.RedoStack.Count -eq 0) { $state.Message = ' Nothing to redo '; return }; State-Apply $state.RedoStack.Pop() $state.UndoStack }
 
-function Sel-Bounds { SelBounds }
 
+# Returns the currently selected text in the buffer.
 function Get-SelectionText {
   if (-not $state.SelActive) { return [string]::Empty }
   $a, $b = SelBounds
   (BufText).Substring($a, $b - $a)
 }
 
+# Deletes the currently selected text and clears the selection state.
 function Delete-Selection {
   if (-not $state.SelActive) { return }
   $a, $b = SelBounds; $t = BufText
@@ -1006,7 +1026,53 @@ function Delete-Selection {
   $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]
   $state.SelActive = $false; $state.Dirty = $true
 }
+# Helper for editing commands: if a selection is active, snapshots state and deletes it.
+function Edit-Action {
+  if ($state.SelActive) {
+    State-Snapshot
+    Delete-Selection
+    return $true
+  }
+  return $false
+}
 
+# Inserts a string at the current cursor position.
+function Insert-Text([string]$text) {
+  if ([string]::IsNullOrEmpty($text)) { return }
+  $t = BufText
+  BufSet ($t.Substring(0, $state.Cursor) + $text + $t.Substring($state.Cursor))
+  $state.Cursor += $text.Length
+  $state.Dirty = $true
+  $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]
+}
+
+# High-level insert: handles snapshots, active selection deletion, and text insertion.
+function Edit-Insert([string]$text) {
+  if (-not (Edit-Action)) { State-Snapshot }
+  Insert-Text $text
+}
+
+# Deletes a single character at or before the cursor, respecting active selections.
+function Delete-Char([bool]$back) {
+  if (Edit-Action) { return }
+  if ($back) {
+    if ($state.Cursor -gt 0) {
+      State-Snapshot; $t = BufText
+      BufSet ($t.Substring(0, $state.Cursor - 1) + $t.Substring($state.Cursor))
+      $state.Cursor--
+      $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true
+    }
+  } else {
+    if ($state.Cursor -lt (BufLen)) {
+      State-Snapshot; $t = BufText
+      BufSet ($t.Substring(0, $state.Cursor) + $t.Substring($state.Cursor + 1))
+      $state.Dirty = $true
+    }
+  }
+}
+
+
+# Activates the selection and sets the anchor to the current cursor position.
 function Begin-Sel {
   if (-not $state.SelActive) {
     $state.SelActive = $true
@@ -1014,6 +1080,7 @@ function Begin-Sel {
   }
 }
 
+# Pastes text into the buffer, handling state snapshots and selection deletion.
 function Paste-Text([string]$text) {
   if ([string]::IsNullOrEmpty($text)) { $state.Message = ' Clipboard empty '; return }
   State-Snapshot
@@ -1029,6 +1096,7 @@ function Paste-Text([string]$text) {
 
 function Clamp-Cursor { ClampCursor }
 
+# Adjusts the vertical scroll position to keep the cursor within the viewport.
 function Update-Scroll {
   $height = [Console]::WindowHeight - 2
   $curRow = (OffsetToRowCol $state.Cursor)[0]
@@ -1036,6 +1104,7 @@ function Update-Scroll {
   elseif ($curRow -ge $state.ScrollRow + $height) { $state.ScrollRow = $curRow - $height + 1 }
 }
 
+# Returns the ANSI escape sequence to move the cursor to a specific screen position (row, col).
 function Move-To([int]$r, [int]$c) { "`e[$r;${c}H" }
 
 function Build-EditorRow([int]$rowIndex, [int]$screenWidth, [int]$textWidth) {
@@ -1043,7 +1112,7 @@ function Build-EditorRow([int]$rowIndex, [int]$screenWidth, [int]$textWidth) {
   $selA = 0; $selB = 0
   if ($state.SelActive) { $selA, $selB = SelBounds }
 
-  # ── header ──────────────────────────────────────────────────────────────
+  # -- header
   if ($rowIndex -eq 0) {
     $themeName = $script:themes[$script:themeNames[$script:themeIdx]].name
     $fileName = if ($state.FilePath) { [IO.Path]::GetFileName($state.FilePath) } else { 'new file' }
@@ -1128,6 +1197,7 @@ function Build-EditorRow([int]$rowIndex, [int]$screenWidth, [int]$textWidth) {
   $sb.ToString()
 }
 
+# Renders the entire editor frame, including header, footer, and visible buffer rows.
 function Render-Frame {
   $width = [Console]::WindowWidth
   $height = [Console]::WindowHeight
@@ -1170,6 +1240,7 @@ function Render-Frame {
   $state.Message = ''
 }
 
+# Displays a modal help dialog with keybindings and theme information.
 function Show-Help {
   $width = [Console]::WindowWidth
   $height = [Console]::WindowHeight
@@ -1230,13 +1301,17 @@ function Search-Execute([string]$term) {
   $state.Message = ' Found '
 }
 
+# ---------------------------------------------------------------------------
+# Input Logic
+# ---------------------------------------------------------------------------
+# Processes keyboard input in standard edit mode.
 function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
   $key = $keyInfo.Key
   $ctrl = ($keyInfo.Modifiers -band [ConsoleModifiers]::Control) -ne 0
   $shift = ($keyInfo.Modifiers -band [ConsoleModifiers]::Shift) -ne 0
   $char = $keyInfo.KeyChar
 
-  # ── Ctrl ────────────────────────────────────────────────────────────────
+  # -- Ctrl
   if ($ctrl) {
     switch ($key) {
       'T' {
@@ -1265,53 +1340,47 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
     return
   }
 
-  # ── navigation ───────────────────────────────────────────────────────────
+  # -- navigation
   switch ($key) {
 
     'LeftArrow' {
-      if ($state.SelActive -and -not $shift) { $state.Cursor = (SelBounds)[0] }
+      if ($state.SelActive -and -not $shift) { $state.Cursor = (SelBounds)[0]; $state.SelActive = $false }
       elseif ($state.Cursor -gt 0) {
-        if ($shift -and -not $state.SelActive) { $state.SelAnchor = $state.Cursor; $state.SelActive = $true }
+        if ($shift) { Begin-Sel } else { $state.SelActive = $false }
         $state.Cursor--
       }
-      if (-not $shift) { $state.SelActive = $false }
       $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; return
     }
 
     'RightArrow' {
-      if ($state.SelActive -and -not $shift) { $state.Cursor = (SelBounds)[1] }
+      if ($state.SelActive -and -not $shift) { $state.Cursor = (SelBounds)[1]; $state.SelActive = $false }
       elseif ($state.Cursor -lt (BufLen)) {
-        if ($shift -and -not $state.SelActive) { $state.SelAnchor = $state.Cursor; $state.SelActive = $true }
+        if ($shift) { Begin-Sel } else { $state.SelActive = $false }
         $state.Cursor++
       }
-      if (-not $shift) { $state.SelActive = $false }
       $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; return
     }
 
     'UpArrow' {
-      if ($shift -and -not $state.SelActive) { $state.SelAnchor = $state.Cursor; $state.SelActive = $true }
-      if (-not $shift) { $state.SelActive = $false }
+      if ($shift) { Begin-Sel } else { $state.SelActive = $false }
       $row = (OffsetToRowCol $state.Cursor)[0]
       if ($row -gt 0) { $state.Cursor = RowColToOffset ($row - 1) $state.PreferredCol }
       return
     }
 
     'DownArrow' {
-      if ($shift -and -not $state.SelActive) { $state.SelAnchor = $state.Cursor; $state.SelActive = $true }
-      if (-not $shift) { $state.SelActive = $false }
+      if ($shift) { Begin-Sel } else { $state.SelActive = $false }
       $row = (OffsetToRowCol $state.Cursor)[0]
       $state.Cursor = RowColToOffset ($row + 1) $state.PreferredCol; return
     }
 
     'Home' {
-      if ($shift -and -not $state.SelActive) { $state.SelAnchor = $state.Cursor; $state.SelActive = $true }
-      if (-not $shift) { $state.SelActive = $false }
+      if ($shift) { Begin-Sel } else { $state.SelActive = $false }
       $state.Cursor = LineStart $state.Cursor; $state.PreferredCol = 0; return
     }
 
     'End' {
-      if ($shift -and -not $state.SelActive) { $state.SelAnchor = $state.Cursor; $state.SelActive = $true }
-      if (-not $shift) { $state.SelActive = $false }
+      if ($shift) { Begin-Sel } else { $state.SelActive = $false }
       $state.Cursor = LineEnd $state.Cursor
       $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; return
     }
@@ -1330,63 +1399,30 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
       $state.Cursor = RowColToOffset ($row + $page) $state.PreferredCol; return
     }
 
-    # ── editing ─────────────────────────────────────────────────────────────
+    # -- editing
 
     'Enter' {
-      State-Snapshot
-      if ($state.SelActive) { Delete-Selection }
       $curLine = GetLine (OffsetToRowCol $state.Cursor)[0]
       $leadingWS = if ($curLine -match '^(\s+)') { $Matches[1] } else { '' }
-      $ins = "`n" + $leadingWS; $t = BufText
-      BufSet ($t.Substring(0, $state.Cursor) + $ins + $t.Substring($state.Cursor))
-      $state.Cursor += $ins.Length
-      $state.PreferredCol = $leadingWS.Length; $state.Dirty = $true; return
+      Edit-Insert ("`n" + $leadingWS); return
     }
 
-    'Backspace' {
-      if ($state.SelActive) { State-Snapshot; Delete-Selection; return }
-      if ($state.Cursor -gt 0) {
-        State-Snapshot; $t = BufText
-        BufSet ($t.Substring(0, $state.Cursor - 1) + $t.Substring($state.Cursor))
-        $state.Cursor--
-        $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true
-      }
-      return
-    }
+    'Backspace' { Delete-Char $true; return }
 
-    { $_ -in 'Delete', 'DeleteChar' } {
-      if ($state.SelActive) { State-Snapshot; Delete-Selection; return }
-      if ($state.Cursor -lt (BufLen)) {
-        State-Snapshot; $t = BufText
-        BufSet ($t.Substring(0, $state.Cursor) + $t.Substring($state.Cursor + 1))
-        $state.Dirty = $true
-      }
-      return
-    }
+    { $_ -in 'Delete', 'DeleteChar' } { Delete-Char $false; return }
 
-    'Tab' {
-      State-Snapshot
-      if ($state.SelActive) { Delete-Selection }
-      $ins = Get-IndentString; $t = BufText
-      BufSet ($t.Substring(0, $state.Cursor) + $ins + $t.Substring($state.Cursor))
-      $state.Cursor += $ins.Length
-      $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true; return
-    }
+    'Tab' { Edit-Insert (Get-IndentString); return }
 
     'Escape' { $state.SelActive = $false; return }
   }
 
   # ── printable char ───────────────────────────────────────────────────────
   if ([int]$char -ge 32 -and [int]$char -ne 127) {
-    State-Snapshot
-    if ($state.SelActive) { Delete-Selection }
-    $t = BufText
-    BufSet ($t.Substring(0, $state.Cursor) + $char + $t.Substring($state.Cursor))
-    $state.Cursor++
-    $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true
+    Edit-Insert $char
   }
 }
 
+# Processes keyboard input in incremental search mode.
 function Handle-SearchKey([ConsoleKeyInfo]$keyInfo) {
   switch ($keyInfo.Key) {
     'Escape' { $state.Mode = 'edit'; $state.SearchBuf = ''; return }
@@ -1398,6 +1434,7 @@ function Handle-SearchKey([ConsoleKeyInfo]$keyInfo) {
   }
 }
 
+# Processes keyboard input when confirming whether to quit with unsaved changes.
 function Handle-ConfirmQuitKey([ConsoleKeyInfo]$keyInfo) {
   switch ($keyInfo.Key) {
     'Y' { $script:running = $false }
@@ -1406,6 +1443,7 @@ function Handle-ConfirmQuitKey([ConsoleKeyInfo]$keyInfo) {
   }
 }
 
+# Displays a confirmation dialog when quitting with unsaved changes.
 function Render-ConfirmQuit {
   $width = [Console]::WindowWidth
   $height = [Console]::WindowHeight
@@ -1423,6 +1461,7 @@ function Render-ConfirmQuit {
   Out-Flush($sb.ToString())
 }
 
+# Main entry point for the babae editor: initialises state, terminal mode, and starts the main loop.
 function Edit-Babae {
   [CmdletBinding()]
   param([Parameter(Position = 0)][string]$Path)
