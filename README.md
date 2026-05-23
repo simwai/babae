@@ -117,12 +117,12 @@ pwsh ./babae.ps1 myfile.txt -Theme mocha
 | `^Y` | Redo |
 | `^F` | Find (incremental search) |
 | `^A` | Select all |
-| `^C` | Copy selection (or current line) |
+| `^C` | Copy selection (or current line if no selection) |
 | `^V` | Paste from clipboard |
 | `^T` | Cycle theme |
-| `^H` | Help |
+| `^H` | Help (uses `Ctrl+H` / byte 8 — Backspace is byte 127 / DEL on xterm) |
 | `Arrow keys` | Move cursor |
-| `Shift+Arrows` | Extend selection |
+| `Shift+Arrows` | Extend selection (↑ ↓ ← →) |
 | `Home` / `End` | Start / end of line |
 | `PgUp` / `PgDn` | Scroll by screen |
 | `Backspace` / `Del` | Delete character |
@@ -130,6 +130,9 @@ pwsh ./babae.ps1 myfile.txt -Theme mocha
 | `Tab` | Insert indent (space or tab per `.editorconfig`) |
 | `Esc` | Cancel search / clear selection |
 | `RightClick` | Paste from clipboard (Windows only) |
+
+> [!NOTE]
+> `^T` (theme) and `^H` (help) replaced the former `Ctrl+1` / `Ctrl+2` bindings. `Ctrl+digit` sequences are indistinguishable from plain digits on xterm-256color over SSH — no escape sequence is emitted — making them unreliable in that environment.
 
 ## Themes
 
