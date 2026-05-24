@@ -105,6 +105,12 @@ pwsh ./babae.ps1 myfile.txt
 
 # Open with a specific theme
 pwsh ./babae.ps1 myfile.txt -Theme mocha
+
+# Open with the diagnostic pane enabled
+pwsh ./babae.ps1 -DiagPane
+
+# Enable file-based debug logging
+pwsh ./babae.ps1 -DebugLog
 ```
 
 ### Keybindings
@@ -120,6 +126,7 @@ pwsh ./babae.ps1 myfile.txt -Theme mocha
 | `^C` | Copy selection (or current line) |
 | `^V` | Paste from clipboard |
 | `^T` | Cycle theme |
+| `^D` | Toggle diagnostics |
 | `^H` | Help |
 | `Arrow keys` | Move cursor |
 | `Shift+Arrows` | Extend selection |
