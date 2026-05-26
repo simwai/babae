@@ -21,10 +21,11 @@ param(
   [string]$Theme = "dark"
 )
 
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
+
+
 # Global Installation / Update
-# ---------------------------------------------------------------------------
+
+#region Global Installation / Update
 if (-not [Console]::IsInputRedirected -and -not $Env:BABAE_SKIP_INSTALL) {
   $installDir = Join-Path $HOME ".babae"
   $installPath = Join-Path $installDir "babae.ps1"
@@ -74,6 +75,9 @@ if (-not [Console]::IsInputRedirected -and -not $Env:BABAE_SKIP_INSTALL) {
     }
   }
 }
+
+#endregion
+
 $ErrorActionPreference = "Stop"
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -86,9 +90,10 @@ if ($DebugLog.IsPresent) {
 }
 Write-Host $script:debugLog
 
-# ---------------------------------------------------------------------------
+
 # Themes
-# ---------------------------------------------------------------------------
+
+#region Themes
 $script:themeNames = @("dark", "mocha", "frappe", "github-dark")
 $script:themes = @{
   "dark"        = @{
@@ -117,9 +122,13 @@ function T([string]$key) { "`e[$($script:themes[$script:themeNames[$script:theme
 $RESET = "`e[0m"
 $BOLD = "`e[1m"
 
-# ---------------------------------------------------------------------------
+
 # Low-flicker output: direct stdout stream + row shadow buffer
-# ---------------------------------------------------------------------------
+
+
+#endregion
+
+#region Output Buffering
 $script:stdoutWriter = [System.IO.StreamWriter]::new([Console]::OpenStandardOutput())
 # Native PowerShell input queue
 $script:inputQueue = [System.Collections.Concurrent.ConcurrentQueue[object]]::new()
@@ -127,7 +136,7 @@ $script:inputPendingKeys = [System.Collections.Generic.Queue[object]]::new()
 $script:inputThread = $null
 $script:stdoutWriter.AutoFlush = $false
 
-# ---------------------------------------------------------------------------
+
 # Raw stdin reader — owns all input so we can parse VT sequences ourselves.
 #
 # WHY: Console.ReadKey goes through .NET's console abstraction, which on
@@ -140,7 +149,11 @@ $script:stdoutWriter.AutoFlush = $false
 # event is ready and returns either:
 #   [PSCustomObject]@{ Kind='Key';   KeyInfo=<ConsoleKeyInfo> }
 #   [PSCustomObject]@{ Kind='Paste'; Text=<string> }
-# ---------------------------------------------------------------------------
+
+
+#endregion
+
+#region Input System
 $script:stdinStream   = [Console]::OpenStandardInput()
 $script:inputBuf      = [byte[]]::new(4096)
 $script:inputPending  = [System.Collections.Generic.Queue[byte]]::new()
@@ -184,7 +197,6 @@ function Stdin-TryDrain {
   return $true  # either data or EOF — either way, caller should read
 }
 
-# ── Public API ─────────────────────────────────────────────────────────────────
 
 # Main-loop poll: returns $true when input is ready without blocking.
 function Stdin-DataAvailable {
@@ -452,8 +464,7 @@ function Read-NextInputEvent {
     return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]17) ([System.ConsoleKey]::Q) ([System.ConsoleModifiers]::Control)) }
   }
 
-  # ── Bracketed-paste start: ESC [ 2 0 0 ~ ───────────────────────────────
-  # We detect it at the byte level by reading ahead after an ESC.
+    # We detect it at the byte level by reading ahead after an ESC.
   if ($b -eq 27) {
     # Wait briefly for the bytes that follow ESC to arrive.
     # On a real tty they are all in the kernel buffer already.
@@ -521,8 +532,7 @@ function Read-NextInputEvent {
     return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Make-KeyInfo ([char]27) ([System.ConsoleKey]::Escape) 0) }
   }
 
-  # ── Control bytes ────────────────────────────────────────────────────────
-  switch ($b) {
+    switch ($b) {
     0   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]0)  ([System.ConsoleKey]::D2)        ([System.ConsoleModifiers]::Control)) } }
     13  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]13)  ([System.ConsoleKey]::Enter)     0) } }
     127 { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
@@ -544,8 +554,7 @@ function Read-NextInputEvent {
     }
   }
 
-  # ── Printable UTF-8 character ────────────────────────────────────────────
-  # Decode multi-byte sequences.
+    # Decode multi-byte sequences.
   [byte[]]$charBytes = @($b)
   if ($b -ge 0xC0) {
     $extra = if ($b -ge 0xF0) { 3 } elseif ($b -ge 0xE0) { 2 } else { 1 }
@@ -557,6 +566,10 @@ function Read-NextInputEvent {
   $ck = try { [System.ConsoleKey]$ch.ToString().ToUpper() } catch { [System.ConsoleKey]::NoName }
   return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo $ch $ck 0) }
 }
+
+#endregion
+
+#region Output management
 $script:lastRows = [System.Collections.Generic.List[string]]::new()
 $script:lastCursorRow = -1
 $script:lastCursorCol = -1
@@ -574,18 +587,22 @@ function Reset-RenderShadow {
   $script:lastCursorVisible = $false
 }
 
-# ---------------------------------------------------------------------------
+
 # Debug logging
-# ---------------------------------------------------------------------------
+
 function Write-DebugLog([string]$message) {
   if ($null -eq $script:debugLog) { return }
   $ts = [DateTimeOffset]::UtcNow.ToString('HH:mm:ss.fff')
   Add-Content -LiteralPath $script:debugLog -Value "[$ts] $message" -Encoding UTF8
 }
 
-# ---------------------------------------------------------------------------
+
 # .editorconfig
-# ---------------------------------------------------------------------------
+
+
+#endregion
+
+#region Configuration
 $script:ec = @{
   indent_style             = "space"
   indent_size              = 4
@@ -608,6 +625,7 @@ $script:commands = @(
   [PSCustomObject]@{ Key = '^C'; Label = 'Copy' }
   [PSCustomObject]@{ Key = '^V'; Label = 'Paste' }
   [PSCustomObject]@{ Key = '^H'; Label = 'Help' }
+  [PSCustomObject]@{ Key = '^3'; Label = 'Predict' }
 )
 
 
@@ -713,9 +731,10 @@ function Get-IndentString {
   return ' ' * [Math]::Max(1, $script:ec.indent_size)
 }
 
-# ---------------------------------------------------------------------------
+
 # Clipboard
-# ---------------------------------------------------------------------------
+
+#region Clipboard Support
 function Get-ClipboardText {
   $result = $null
   try {
@@ -746,9 +765,13 @@ if ($IsWindows -or $env:OS -eq 'Windows_NT') {
   Add-Type -AssemblyName System.Windows.Forms -ErrorAction SilentlyContinue
 }
 
-# ---------------------------------------------------------------------------
+
 # Windows mouse support
-# ---------------------------------------------------------------------------
+
+
+#endregion
+
+#region Windows Mouse Support
 $script:mouseEnabled = $false
 $script:origConsoleMode = 0
 $script:consoleHandle = [IntPtr]::Zero
@@ -804,28 +827,135 @@ public static class BabaeWin {
   } catch {}
 }
 
-# ---------------------------------------------------------------------------
+
 # Editor state
-# ---------------------------------------------------------------------------
+
+
+#endregion
+
 function Get-Language([string]$fp) {
   if ([string]::IsNullOrEmpty($fp)) { return 'Plain Text' }
   switch ([IO.Path]::GetExtension($fp).ToLowerInvariant()) {
     '.ps1' { 'PowerShell' }
     '.psm1' { 'PowerShell' }
     '.psd1' { 'PowerShell' }
-    '.cs' { 'C#' }
+     { $_ -eq '.cs' } { 'C#' }
     '.ts' { 'TypeScript' }
     '.tsx' { 'TypeScript' }
     '.js' { 'JavaScript' }
     '.jsx' { 'JavaScript' }
-    '.py' { 'Python' }
-    '.json' { 'JSON' }
-    '.md' { 'Markdown' }
+     { $_ -eq '.py' } { 'Python' }
+     { $_ -eq '.json' } { 'JSON' }
+     { $_ -eq '.md' } { 'Markdown' }
     '.sh' { 'Bash' }
     '.bash' { 'Bash' }
     default { 'Plain Text' }
   }
 }
+
+
+
+#endregion
+#region Prediction State
+$script:ngramModel = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.Dictionary[string, int]]]::new([System.StringComparer]::OrdinalIgnoreCase)
+$script:autocompleteEnabled = $true
+$script:ghostText = ""
+$script:ghostContext = ""
+$script:lineHashes = @{}
+
+$seedData = @"
+the quick brown
+quick brown fox
+brown fox jumps
+fox jumps over
+jumps over the
+over the lazy
+the lazy dog
+this is a
+is a test
+how are you
+what is the
+in the world
+one of the
+out of the
+at the end
+of the line
+it is a
+there is a
+can you help
+thank you for
+let me know
+if you want
+to be able
+i would like
+in terms of
+as well as
+in order to
+based on the
+due to the
+it was a
+would be a
+has been a
+i have a
+you have a
+we have a
+they have a
+he has a
+she has a
+there was a
+this was a
+for the first
+at the same
+the same time
+in the past
+for example if
+on the other
+the other hand
+a lot of
+some of the
+part of the
+end of the
+back to the
+go to the
+come to the
+into the room
+it could be
+might be a
+may be a
+should be a
+must be a
+going to be
+trying to find
+want to see
+looked at the
+said to the
+thought about the
+went to the
+came from the
+looked like a
+seemed to be
+each of the
+both of the
+all of the
+many of the
+most of the
+few of the
+some of these
+any of them
+"@
+
+$seedData -split "`n" | ForEach-Object {
+    $parts = $_.Trim() -split "\s+"
+    if ($parts.Count -eq 3) {
+        $bigram = "$($parts[0]) $($parts[1])"
+        $successor = $parts[2]
+        if (-not $script:ngramModel.ContainsKey($bigram)) {
+            $script:ngramModel[$bigram] = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        }
+        $script:ngramModel[$bigram][$successor] = 1
+    }
+}
+#endregion
 
 $state = [PSCustomObject]@{
   Buffer       = [System.Text.StringBuilder]::new()
@@ -845,13 +975,54 @@ $state = [PSCustomObject]@{
   SelAnchor    = 0
 }
 
-# ── flat-buffer primitives ───────────────────────────────────────────────────
 
+#region Buffer Primitives
 function BufText { $state.Buffer.ToString() }
 function BufLen { $state.Buffer.Length }
+
+#region Prediction Logic
+function Get-Tokens([string]$text) {
+  $text -split "[^\p{L}\p{N}_]+" | ForEach-Object { if ($_.Trim() -ne "") { $_.ToLowerInvariant() } }
+}
+
+function Train-NgramLine([int]$lineIdx) {
+  $line = GetLine $lineIdx; if ($null -eq $line) { return }
+  $hash = $line.GetHashCode().ToString()
+  if ($script:lineHashes.ContainsKey($lineIdx) -and $script:lineHashes[$lineIdx] -eq $hash) { return }
+  $script:lineHashes[$lineIdx] = $hash
+  $tokens = @(Get-Tokens $line); if ($tokens.Count -lt 3) { return }
+  for ($i = 0; $i -le ($tokens.Count - 3); $i++) {
+    $bigram = "$($tokens[$i]) $($tokens[$i+1])"; $successor = $tokens[$i+2]
+    if (-not $script:ngramModel.ContainsKey($bigram)) { $script:ngramModel[$bigram] = [System.Collections.Generic.Dictionary[string, int]]::new([System.StringComparer]::OrdinalIgnoreCase) }
+    $dict = $script:ngramModel[$bigram]; if ($dict.ContainsKey($successor)) { $dict[$successor]++ } else { $dict[$successor] = 1 }
+  }
+}
+
+function Get-NgramSuggestion {
+  if (-not $script:autocompleteEnabled -or $state.Cursor -ne (BufLen)) { $script:ghostText = ""; return }
+  $t = BufText; if ($t.Length -gt 0 -and $t[$t.Length-1] -match "\S") { $script:ghostText = ""; return }
+  $tokens = @(Get-Tokens $t); if ($tokens.Count -lt 2) { $script:ghostText = ""; return }
+  $bigram = "$($tokens[-2]) $($tokens[-1])"; $script:ghostContext = $bigram
+  if ($script:ngramModel.ContainsKey($bigram)) {
+    $dict = $script:ngramModel[$bigram]; $bestWord = ""; $maxFreq = -1
+    foreach ($kv in $dict.GetEnumerator()) { if ($kv.Value -gt $maxFreq) { $maxFreq = $kv.Value; $bestWord = $kv.Key } }
+    $script:ghostText = $bestWord
+  } else { $script:ghostText = "" }
+}
+
+function Update-GhostOnBufferChange {
+  if ($script:ghostText -eq "") { return }
+  $t = BufText; $tokens = @(Get-Tokens $t)
+  if ($tokens.Count -lt 2) { $script:ghostText = ""; return }
+  $currentContext = "$($tokens[-2]) $($tokens[-1])"
+  if ($currentContext -ne $script:ghostContext) { $script:ghostText = "" }
+}
+#endregion
+
 function BufSet([string]$text) {
   $state.Buffer.Clear() | Out-Null
   if ($text) { $state.Buffer.Append($text) | Out-Null }
+  Update-GhostOnBufferChange
 }
 function ClampCursor {
   $state.Cursor = [Math]::Max(0, [Math]::Min($state.Cursor, (BufLen)))
@@ -921,6 +1092,10 @@ function SelBounds {
   [Math]::Max($state.SelAnchor, $state.Cursor)
 }
 
+
+#endregion
+
+#region State Management
 function State-Reset {
   BufSet ''
   $state.Cursor = 0; $state.PreferredCol = 0; $state.ScrollRow = 0
@@ -1029,6 +1204,10 @@ function Paste-Text([string]$text) {
 
 function Clamp-Cursor { ClampCursor }
 
+
+#endregion
+
+#region Scrolling
 function Update-Scroll {
   $height = [Console]::WindowHeight - 2
   $curRow = (OffsetToRowCol $state.Cursor)[0]
@@ -1036,15 +1215,22 @@ function Update-Scroll {
   elseif ($curRow -ge $state.ScrollRow + $height) { $state.ScrollRow = $curRow - $height + 1 }
 }
 
+
+#endregion
+
+#region Terminal Utils
 function Move-To([int]$r, [int]$c) { "`e[$r;${c}H" }
 
+
+#endregion
+
+#region Rendering
 function Build-EditorRow([int]$rowIndex, [int]$screenWidth, [int]$textWidth) {
   $curRow, $curCol = OffsetToRowCol $state.Cursor
   $selA = 0; $selB = 0
   if ($state.SelActive) { $selA, $selB = SelBounds }
 
-  # ── header ──────────────────────────────────────────────────────────────
-  if ($rowIndex -eq 0) {
+    if ($rowIndex -eq 0) {
     $themeName = $script:themes[$script:themeNames[$script:themeIdx]].name
     $fileName = if ($state.FilePath) { [IO.Path]::GetFileName($state.FilePath) } else { 'new file' }
     $dirty = if ($state.Dirty) { "$(T 'fgDirty')●$RESET$(T 'bgHeader')$(T 'fgHeader') " } else { '  ' }
@@ -1053,8 +1239,7 @@ function Build-EditorRow([int]$rowIndex, [int]$screenWidth, [int]$textWidth) {
     return "$(T 'bgHeader')$(T 'fgHeader')${BOLD} babae $RESET$(T 'bgHeader')$(T 'fgMuted')| $RESET$(T 'bgHeader')$(T 'fgHeader')$dirty$fileName [$($state.Language)] $(T 'bgHeader')$(T 'fgMuted')| $RESET$(T 'bgHeader')$(T 'fgHeader')$themeName$(' ' * $pad)$RESET"
   }
 
-  # ── status bar ──────────────────────────────────────────────────────────
-  if ($rowIndex -eq ([Console]::WindowHeight - 1)) {
+    if ($rowIndex -eq ([Console]::WindowHeight - 1)) {
     $msg = $state.Message
     $pos = " $($curRow + 1):$($curCol + 1) "
     $ecHint = if ($script:ec.indent_style -eq 'tab') { 'tab' } else { "$($script:ec.indent_size)sp" }
@@ -1064,16 +1249,17 @@ function Build-EditorRow([int]$rowIndex, [int]$screenWidth, [int]$textWidth) {
       $pad = [Math]::Max(0, $screenWidth - $plain.Length)
       return "$(T 'bgBar')$(T 'fgAccent')${BOLD} Search:$RESET$(T 'bgBar')$(T 'fgNorm') $($state.SearchBuf)_ $(T 'fgMuted')(Enter=jump Esc=cancel)$(' ' * $pad)$RESET"
     }
-    $barCmds = $script:commands | Where-Object { $_.Key -in '^T', '^S', '^Q', '^F', '^Z', '^H' }
+    $barCmds = $script:commands | Where-Object { $_.Key -in '^T', '^S', '^Q', '^F', '^Z', '^H', '^3' }
     $leftPlain = ' ' + (($barCmds | ForEach-Object { "$($_.Key) $($_.Label)" }) -join ' ') + ' '
-    $rightPlain = " $eol | $ecHint |$pos"
+    $predictStatus = if ($script:autocompleteEnabled) { "Predict ON" } else { "Predict OFF" }
+    $rightPlain = " $predictStatus | $eol | $ecHint |$pos"
     if ($msg) { $rightPlain = " $msg |" + $rightPlain }
     if ($state.SelActive) { $rightPlain = " SEL |" + $rightPlain }
     $pad = [Math]::Max(0, $screenWidth - $leftPlain.Length - $rightPlain.Length)
     $right = ''
     if ($msg) { $right += "$(T 'fgSaved') $msg $RESET$(T 'bgBar')$(T 'fgMuted')│" }
     if ($state.SelActive) { $right += "$(T 'fgAccent') SEL $RESET$(T 'bgBar')$(T 'fgMuted')│" }
-    $right += "$(T 'fgMuted') $eol $(T 'fgMuted')│ $(T 'fgMuted')$ecHint $(T 'fgMuted')│$(T 'fgAccent')$pos$RESET"
+    $right += "$(T 'fgMuted') $predictStatus │ $eol │ $ecHint │$(T 'fgAccent')$pos$RESET"
     $barLeft = "$(T 'bgBar')"
     foreach ($cmd in $barCmds) {
       $barLeft += "$(T 'fgAccent')${BOLD}$($cmd.Key)$RESET$(T 'bgBar')$(T 'fgMuted') $($cmd.Label) "
@@ -1081,8 +1267,7 @@ function Build-EditorRow([int]$rowIndex, [int]$screenWidth, [int]$textWidth) {
     return "$barLeft$(' ' * $pad)$right"
   }
 
-  # ── content row ─────────────────────────────────────────────────────────
-  $lineIdx = $rowIndex - 1 + $state.ScrollRow
+    $lineIdx = $rowIndex - 1 + $state.ScrollRow
   $lineText = GetLine $lineIdx
   if ($null -eq $lineText) {
     return "$(T 'bgGutter')$(T 'fgTilde')   ~ $RESET$(T 'bg')$(' ' * $textWidth)$RESET"
@@ -1105,8 +1290,13 @@ function Build-EditorRow([int]$rowIndex, [int]$screenWidth, [int]$textWidth) {
   $rulerCol = if ($script:ec.max_line_length -gt 0) { $script:ec.max_line_length } else { -1 }
   $lineInSel = $state.SelActive -and ($selA -lt $lineEndOff) -and ($selB -gt $lineOffset)
 
+
+  if ($lineIdx -eq (LineCount) - 1 -and $script:ghostText -and $script:autocompleteEnabled) {
+    $ghostSlice = if (($slice.Length + $script:ghostText.Length) -gt $textWidth) { $script:ghostText.Substring(0, [Math]::Max(0, $textWidth - $slice.Length)) } else { $script:ghostText }
+    $slice += "$(T 'fgMuted')" + $ghostSlice + "$(T 'fgNorm')"
+  }
   if (-not $lineInSel -and ($rulerCol -lt 0 -or $rulerCol -ge $textWidth)) {
-    $pad = [Math]::Max(0, $textWidth - $slice.Length)
+    $visibleLen = ($slice -replace '\\e\[[0-9;]*m', '').Length; $pad = [Math]::Max(0, $textWidth - $visibleLen)
     return "$gutter$bg$(T 'fgNorm')$slice$(' ' * $pad)$RESET"
   }
 
@@ -1115,6 +1305,7 @@ function Build-EditorRow([int]$rowIndex, [int]$screenWidth, [int]$textWidth) {
   for ($ci = 0; $ci -lt $textWidth; $ci++) {
     $absOff = $lineOffset + $ci
     $ch = if ($ci -lt $slice.Length) { [string]$slice[$ci] } else { ' ' }
+    if ($ch -eq "`e") { while ($ci -lt $slice.Length -and $slice[$ci] -ne "m") { $sb.Append($slice[$ci]) | Out-Null; $ci++ }; if ($ci -lt $slice.Length) { $sb.Append($slice[$ci]) | Out-Null }; continue }
     $inSel = $state.SelActive -and $absOff -ge $selA -and $absOff -lt $selB
     if ($inSel) {
       [void]$sb.Append("$(T 'bgSel')$(T 'fgSel')$ch$bg$(T 'fgNorm')")
@@ -1170,6 +1361,10 @@ function Render-Frame {
   $state.Message = ''
 }
 
+
+#endregion
+
+#region Help System
 function Show-Help {
   $width = [Console]::WindowWidth
   $height = [Console]::WindowHeight
@@ -1217,6 +1412,10 @@ function Show-Help {
   Reset-RenderShadow
 }
 
+
+#endregion
+
+#region Search System
 function Search-Execute([string]$term) {
   if ([string]::IsNullOrWhiteSpace($term)) { return }
   $state.LastSearch = $term; $state.SelActive = $false
@@ -1230,14 +1429,17 @@ function Search-Execute([string]$term) {
   $state.Message = ' Found '
 }
 
+
+#endregion
+
+#region Key Handlers
 function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
   $key = $keyInfo.Key
   $ctrl = ($keyInfo.Modifiers -band [ConsoleModifiers]::Control) -ne 0
   $shift = ($keyInfo.Modifiers -band [ConsoleModifiers]::Shift) -ne 0
   $char = $keyInfo.KeyChar
 
-  # ── Ctrl ────────────────────────────────────────────────────────────────
-  if ($ctrl) {
+    if ($ctrl) {
     switch ($key) {
       'T' {
         $script:themeIdx = ($script:themeIdx + 1) % $script:themeNames.Count
@@ -1260,13 +1462,13 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
         Set-ClipboardText $text; $state.Message = ' Copied to clipboard '; return
       }
       'V' { Paste-Text (Get-ClipboardText); return }
+      'D3' { $script:autocompleteEnabled = -not $script:autocompleteEnabled; $state.Message = " Predict $(if ($script:autocompleteEnabled) { 'ON' } else { 'OFF' }) "; return }
       'H' { Show-Help; return }
     }
     return
   }
 
-  # ── navigation ───────────────────────────────────────────────────────────
-  switch ($key) {
+    switch ($key) {
 
     'LeftArrow' {
       if ($state.SelActive -and -not $shift) { $state.Cursor = (SelBounds)[0] }
@@ -1330,7 +1532,6 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
       $state.Cursor = RowColToOffset ($row + $page) $state.PreferredCol; return
     }
 
-    # ── editing ─────────────────────────────────────────────────────────────
 
     'Enter' {
       State-Snapshot
@@ -1340,7 +1541,7 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
       $ins = "`n" + $leadingWS; $t = BufText
       BufSet ($t.Substring(0, $state.Cursor) + $ins + $t.Substring($state.Cursor))
       $state.Cursor += $ins.Length
-      $state.PreferredCol = $leadingWS.Length; $state.Dirty = $true; return
+      $state.PreferredCol = $leadingWS.Length; $state.Dirty = $true; Train-NgramLine (OffsetToRowCol $state.Cursor)[0]; Get-NgramSuggestion; return
     }
 
     'Backspace' {
@@ -1351,7 +1552,7 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
         $state.Cursor--
         $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true
       }
-      return
+      Get-NgramSuggestion; return
     }
 
     { $_ -in 'Delete', 'DeleteChar' } {
@@ -1361,10 +1562,15 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
         BufSet ($t.Substring(0, $state.Cursor) + $t.Substring($state.Cursor + 1))
         $state.Dirty = $true
       }
-      return
+      Get-NgramSuggestion; return
     }
 
     'Tab' {
+      if ($script:ghostText -and $state.Cursor -eq (BufLen)) {
+        $ins = $script:ghostText + " "; $script:ghostText = ""; $t = BufText
+        BufSet ($t.Substring(0, $state.Cursor) + $ins + $t.Substring($state.Cursor))
+        $state.Cursor += $ins.Length; $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true; return
+      }
       State-Snapshot
       if ($state.SelActive) { Delete-Selection }
       $ins = Get-IndentString; $t = BufText
@@ -1373,16 +1579,15 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
       $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true; return
     }
 
-    'Escape' { $state.SelActive = $false; return }
+    'Escape' { $state.SelActive = $false; $script:ghostText = ""; return }
   }
 
-  # ── printable char ───────────────────────────────────────────────────────
-  if ([int]$char -ge 32 -and [int]$char -ne 127) {
+    if ([int]$char -ge 32 -and [int]$char -ne 127) {
     State-Snapshot
     if ($state.SelActive) { Delete-Selection }
     $t = BufText
     BufSet ($t.Substring(0, $state.Cursor) + $char + $t.Substring($state.Cursor))
-    $state.Cursor++
+    $state.Cursor++; Train-NgramLine (OffsetToRowCol $state.Cursor)[0]; Get-NgramSuggestion
     $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true
   }
 }
@@ -1423,6 +1628,10 @@ function Render-ConfirmQuit {
   Out-Flush($sb.ToString())
 }
 
+
+#endregion
+
+#region Main Application Loop
 function Edit-Babae {
   [CmdletBinding()]
   param([Parameter(Position = 0)][string]$Path)
@@ -1521,6 +1730,9 @@ function Edit-Babae {
     if ($state.FilePath) { Write-Host "File : $($state.FilePath)" -ForegroundColor DarkGray }
   }
 }
+
+
+#endregion
 
 Set-Alias -Name babae -Value Edit-Babae -Scope Global
 Edit-Babae @PSBoundParameters
