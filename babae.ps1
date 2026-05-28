@@ -377,6 +377,7 @@ function Try-ParseMouseSequence([string]$seq) {
     X       = $x
     Y       = $y
     Left    = (($buttonCode -band 3) -eq 0)
+    Right   = (($buttonCode -band 3) -eq 2)
     Down    = (-not $release)
     Release = $release
     Drag    = (($buttonCode -band 32) -ne 0)
@@ -699,8 +700,8 @@ function Convert-EditorConfigGlobToRegex([string]$glob) {
     }
     if ($ch -eq '?') { [void]$sb.Append('[^/]'); continue }
     if ($ch -eq '.') { [void]$sb.Append('\.'); continue }
-    if ('+()^$|{}'.Contains([string]$ch)) { [void]$sb.Append('\' + $ch); continue }
-    if ($ch -eq '\\') {
+    if ('+()^$|{}'.Contains([string]$ch)) { [void]$sb.Append('' + $ch); continue }
+    if ($ch -eq '') {
       if ($i + 1 -lt $glob.Length) {
         $i++
         [void]$sb.Append([Regex]::Escape([string]$glob[$i]))
@@ -714,7 +715,7 @@ function Convert-EditorConfigGlobToRegex([string]$glob) {
 }
 
 function Test-EditorConfigSectionMatch([string]$pattern, [string]$relativePath) {
-  $normalized = $relativePath -replace '\\', '/'
+  $normalized = $relativePath -replace '', '/'
   $rx = Convert-EditorConfigGlobToRegex $pattern
   if ($pattern.Contains('/')) {
     return $normalized -match $rx
@@ -747,7 +748,7 @@ function Load-EditorConfig([string]$filePath) {
   foreach ($configPath in $stack) {
     $baseDir = [IO.Path]::GetDirectoryName($configPath)
     $relativePath = if ($filePath) {
-      [IO.Path]::GetRelativePath($baseDir, [IO.Path]::GetFullPath($filePath)) -replace '\\', '/'
+      [IO.Path]::GetRelativePath($baseDir, [IO.Path]::GetFullPath($filePath)) -replace '', '/'
     } else {
       $fileName
     }
@@ -1393,9 +1394,11 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
           if ($script:diagPaneHeight -lt 1) { $script:diagPaneHeight = $script:diagDefaultHeight }
           Write-DiagLog 'INFO' 'Diagnostic pane enabled.'
           $state.Message = ' Diagnostics on '
+          Out-Flush("`e[?1000h`e[?1003h`e[?1006h")
         } else {
           $script:diagDragging = $false
           $state.Message = ' Diagnostics off '
+          Out-Flush("`e[?1006l`e[?1003l`e[?1000l")
         }
         Reset-RenderShadow
         return
@@ -1494,10 +1497,7 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
       $curLine = GetLine (OffsetToRowCol $state.Cursor)[0]
       $leadingWS = if ($curLine -match '^(\s+)') { $Matches[1] } else { '' }
       $ins = "`n" + $leadingWS
-      $t = $state.Buffer.ToString()
-      $state.Buffer.Clear() | Out-Null
-      $state.Buffer.Append($t.Substring(0, $state.Cursor) + $ins + $t.Substring($state.Cursor)) | Out-Null
-      Rebuild-LineIndex
+      BufSet ($state.Buffer.ToString().Substring(0, $state.Cursor) + $ins + $state.Buffer.ToString().Substring($state.Cursor))
       $state.Cursor += $ins.Length
       $state.PreferredCol = $leadingWS.Length; $state.Dirty = $true; return
     }
@@ -1506,10 +1506,7 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
       if ($state.SelActive) { State-Snapshot; Delete-Selection; return }
       if ($state.Cursor -gt 0) {
         State-Snapshot
-        $t = $state.Buffer.ToString()
-        $state.Buffer.Clear() | Out-Null
-        $state.Buffer.Append($t.Substring(0, $state.Cursor - 1) + $t.Substring($state.Cursor)) | Out-Null
-        Rebuild-LineIndex
+        BufSet ($state.Buffer.ToString().Substring(0, $state.Cursor - 1) + $state.Buffer.ToString().Substring($state.Cursor))
         $state.Cursor--
         $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true
       }
@@ -1520,10 +1517,7 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
       if ($state.SelActive) { State-Snapshot; Delete-Selection; return }
       if ($state.Cursor -lt (BufLen)) {
         State-Snapshot
-        $t = $state.Buffer.ToString()
-        $state.Buffer.Clear() | Out-Null
-        $state.Buffer.Append($t.Substring(0, $state.Cursor) + $t.Substring($state.Cursor + 1)) | Out-Null
-        Rebuild-LineIndex
+        BufSet ($state.Buffer.ToString().Substring(0, $state.Cursor) + $state.Buffer.ToString().Substring($state.Cursor + 1))
         $state.Dirty = $true
       }
       return
@@ -1533,10 +1527,7 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
       State-Snapshot
       if ($state.SelActive) { Delete-Selection }
       $ins = Get-IndentString
-      $t = $state.Buffer.ToString()
-      $state.Buffer.Clear() | Out-Null
-      $state.Buffer.Append($t.Substring(0, $state.Cursor) + $ins + $t.Substring($state.Cursor)) | Out-Null
-      Rebuild-LineIndex
+      BufSet ($state.Buffer.ToString().Substring(0, $state.Cursor) + $ins + $state.Buffer.ToString().Substring($state.Cursor))
       $state.Cursor += $ins.Length
       $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true; return
     }
@@ -1548,10 +1539,7 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
   if ([int]$char -ge 32 -and [int]$char -ne 127) {
     State-Snapshot
     if ($state.SelActive) { Delete-Selection }
-    $t = $state.Buffer.ToString()
-    $state.Buffer.Clear() | Out-Null
-    $state.Buffer.Append($t.Substring(0, $state.Cursor) + $char + $t.Substring($state.Cursor)) | Out-Null
-    Rebuild-LineIndex
+    BufSet ($state.Buffer.ToString().Substring(0, $state.Cursor) + $char + $state.Buffer.ToString().Substring($state.Cursor))
     $state.Cursor++
     $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true
   }
@@ -1626,7 +1614,9 @@ function Edit-Babae {
   # every right-click / middle-click paste in ESC[200~...ESC[201~ sentinels.
   # Our raw stdin reader picks those up and routes the payload directly to
   # Paste-Text, bypassing the Enter handler and its auto-indent injection.
-  Out-Flush("`e[?1049h`e[?2004h`e[?1000h`e[?1003h`e[?1006h`e[?25l`e[2J`e[H")
+  $ansi = "`e[?1049h`e[?2004h`e[?25l`e[2J`e[H"
+  if ($script:diagPaneVisible) { $ansi = "`e[?1049h`e[?2004h`e[?1000h`e[?1003h`e[?1006h`e[?25l`e[2J`e[H" }
+  Out-Flush($ansi)
 
   $prevWidth = 0
   $prevHeight = 0
@@ -1669,6 +1659,8 @@ function Edit-Babae {
       } elseif ($event.Kind -eq 'Mouse') {
         if ($event.Release) {
           $script:diagDragging = $false
+        } elseif ($event.Right -and $event.Down) {
+          Paste-Text (Get-ClipboardText)
         } elseif ($script:diagPaneVisible -and $event.Left -and $event.Down -and $event.Y -eq $script:diagDividerRow) {
           $script:diagDragging = $true
           Handle-DiagMouseDrag $event.Y
@@ -1702,7 +1694,9 @@ function Edit-Babae {
       }
     }
     # Disable bracketed paste mode before handing the terminal back.
-    Out-Flush("`e[?1006l`e[?1003l`e[?1000l`e[?2004l`e[?1049l`e[?25h`e[0m")
+        $ansi = "`e[?2004l`e[?1049l`e[?25h`e[0m"
+    if ($script:diagPaneVisible) { $ansi = "`e[?1006l`e[?1003l`e[?1000l`e[?2004l`e[?1049l`e[?25h`e[0m" }
+    Out-Flush($ansi)
     Write-Host 'babae: session ended.' -ForegroundColor Cyan
     if ($state.FilePath) { Write-Host "File : $($state.FilePath)" -ForegroundColor DarkGray }
   }
