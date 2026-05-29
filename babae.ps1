@@ -106,7 +106,7 @@ $script:debugLog = $null
 if ($DebugLog.IsPresent) {
   $script:debugLog = Join-Path . 'babae-debug.log'
 }
-Write-Host $script:debugLog
+
 
 # ---------------------------------------------------------------------------
 # Themes
@@ -194,7 +194,7 @@ function Stdin-EnsureTask {
 function Stdin-HarvestTask {
   $n = $script:stdinReadTask.GetAwaiter().GetResult()
   $script:stdinReadTask = $null
-  for ($i = 0; $i -lt $n; $i++) { $script:inputPending.Enqueue($script:inputBuf[$i]) }
+  for ($i = 0; $i -lt $n; $i++) { $script:inputPending.Enqueue($script:inputBuf[$i]) | Out-Null }
   return $n
 }
 
@@ -218,7 +218,7 @@ function Stdin-TryDrain {
 
 # Main-loop poll: returns $true when input is ready without blocking.
 function Stdin-DataAvailable {
-  if (-not [Console]::IsInputRedirected) { return ($script:inputPendingKeys.Count -gt 0 -or -not $script:inputQueue.IsEmpty) }
+  if (-not [Console]::IsInputRedirected) { return ($script:inputPendingKeys.Count -gt 0 -or ($script:inputQueue.Count -ne 0)) }
   return Stdin-TryDrain
 }
 
@@ -229,7 +229,7 @@ function Stdin-ReadByte {
     $n = Stdin-HarvestTask   # blocks until data arrives
     if ($n -le 0) { return -1 }
   }
-  return [int]$script:inputPending.Dequeue()
+  return [int]$script:inputPending.Dequeue() | Out-Null
 }
 
 # Drain whatever is already buffered in the OS pipe — no new-data blocking.
@@ -271,7 +271,7 @@ function Stdin-DrainPaste {
       }
     }
 
-    $b  = [int]$script:inputPending.Dequeue()
+    $b  = [int]$script:inputPending.Dequeue() | Out-Null
     if ($b -eq -1) { break }    # EOF inside paste — return whatever we have
     $ch = [char]$b
 
@@ -376,6 +376,21 @@ function Parse-EscapeSequence([string]$seq) {
 }
 
 function Try-ParseMouseSequence([string]$seq) {
+  if ($seq -notmatch '^\[<(\d+);(\d+);(\\d+)([Mm])$') { return $null }
+  $buttonCode = [int]$Matches[1]; $x = [int]$Matches[2]; $y = [int]$Matches[3]; $suffix = $Matches[4]
+  $release = ($suffix -eq 'm')
+  return [PSCustomObject]@{
+    Kind    = 'Mouse'
+    X       = $x; Y = $y
+    Left    = (($buttonCode -band 3) -eq 0)
+    Right   = (($buttonCode -band 3) -eq 2)
+    Down    = (-not $release); Release = $release
+    Drag    = (($buttonCode -band 32) -ne 0)
+  }
+}
+
+
+function Try-ParseMouseSequence([string]$seq) {
   if ($seq -notmatch '^\[<(\d+);(\d+);(\d+)([Mm])$') { return $null }
   $buttonCode = [int]$Matches[1]
   $x = [int]$Matches[2]
@@ -404,13 +419,13 @@ function Start-InputThread {
       while ($true) {
         if ([Console]::KeyAvailable) {
           $ki = [Console]::ReadKey($true)
-          $q.Enqueue($ki)
+          $q.Enqueue($ki) | Out-Null
         } else {
           [System.Threading.Thread]::Sleep(10)
         }
       }
     } catch {
-      $q.Enqueue([PSCustomObject]@{ Kind = 'Diag'; Message = $_.Exception.Message })
+      $q.Enqueue([PSCustomObject]@{ Kind = 'Diag'; Message = $_.Exception.Message }) | Out-Null
     }
   }).AddArgument($script:inputQueue)
   $script:inputHandle = $script:inputThread.BeginInvoke()
@@ -470,12 +485,12 @@ function Stdin-ReadKey {
     }
 
     # Console.ReadKey returns byte 8 for both Backspace and Ctrl+H.
-    # If Key is Backspace, it's the physical key. Otherwise, treat as Ctrl+H.
     if ([int]$ki.KeyChar -eq 8) {
-      if ($ki.Key -eq [System.ConsoleKey]::Backspace) {
-        return Make-KeyInfo ([char]8) ([System.ConsoleKey]::Backspace) 0
+      $hasCtrl = ($ki.Modifiers -band [System.ConsoleModifiers]::Control) -ne 0
+      if ($hasCtrl) {
+        return Make-KeyInfo ([char]8) ([System.ConsoleKey]::H) ([System.ConsoleModifiers]::Control)
       }
-      return Make-KeyInfo ([char]8) ([System.ConsoleKey]::H) ([System.ConsoleModifiers]::Control)
+      return Make-KeyInfo ([char]8) ([System.ConsoleKey]::Backspace) 0
     }
     return $ki
   }
@@ -485,8 +500,10 @@ function Read-NextInputEvent {
   if (-not [Console]::IsInputRedirected) {
     $ki = Stdin-ReadKey
     if ($null -eq $ki) { return $null }
+
+
     if ($ki.Key -eq [System.ConsoleKey]::Escape) {
-      $seq = ''
+      $seq = ""
       $seqBufKeys = [System.Collections.Generic.List[object]]::new()
       $waited = 0
       while ($seq.Length -lt $script:maxSeqLen -and $waited -lt $script:escapeTimeoutMs) {
@@ -497,7 +514,7 @@ function Read-NextInputEvent {
             continue
           }
           $seq += [string]$nki.KeyChar
-          $seqBufKeys.Add($nki)
+          $seqBufKeys.Add($nki) | Out-Null
 
           if ($seq -eq '[200~') { return [PSCustomObject]@{ Kind = 'Paste'; Text = Stdin-DrainPasteInteractive } }
 
@@ -509,10 +526,10 @@ function Read-NextInputEvent {
             return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = $parsed }
           }
 
-          # Check if the current sequence can potentially become a valid BPM or mouse sequence.
-          $couldContinue = '[200~'.StartsWith($seq) -or $seq -eq '[' -or $seq -eq '[<' -or ($seq -match '^\[<[\d;]*$')
+          # Continue if sequence is potentially a prefix of something we handle.
+          $couldContinue = '[200~'.StartsWith($seq) -or '['.StartsWith($seq) -or '[<'.StartsWith($seq) -or ($seq -match '^\[<[\d;]*$')
           if (-not $couldContinue) {
-            foreach ($k in $seqBufKeys) { $script:inputPendingKeys.Enqueue($k) }
+            foreach ($k in $seqBufKeys) { $script:inputPendingKeys.Enqueue($k) | Out-Null }
             break
           }
         } else {
@@ -593,8 +610,8 @@ function Read-NextInputEvent {
     $rawBytes = [System.Text.Encoding]::UTF8.GetBytes($seqStr)
     # Prepend them to the pending queue by rebuilding it.
     $tmp = [System.Collections.Generic.Queue[byte]]::new()
-    foreach ($rb in $rawBytes) { $tmp.Enqueue($rb) }
-    foreach ($rb in $script:inputPending) { $tmp.Enqueue($rb) }
+    foreach ($rb in $rawBytes) { $tmp.Enqueue($rb) | Out-Null }
+    foreach ($rb in $script:inputPending) { $tmp.Enqueue($rb) | Out-Null }
     $script:inputPending = $tmp
     return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Make-KeyInfo ([char]27) ([System.ConsoleKey]::Escape) 0) }
   }
@@ -603,9 +620,9 @@ function Read-NextInputEvent {
   switch ($b) {
     0   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]0)  ([System.ConsoleKey]::D2)        ([System.ConsoleModifiers]::Control)) } }
     13  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]13)  ([System.ConsoleKey]::Enter)     0) } }
-    127 { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
+    127 { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]127) ('Backspace') 0) } }
     # Ctrl+H (byte 8) → open Help. Backspace uses byte 127 (DEL) on xterm/Bitvise.
-    8   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]8) ([System.ConsoleKey]::Backspace) 0) } }
+    8   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]8) ('Backspace') 0) } }
     9   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]9)   ([System.ConsoleKey]::Tab)       0) } }
     27  {}  # handled above
     28  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]28) ([System.ConsoleKey]::D4)        ([System.ConsoleModifiers]::Control)) } }
@@ -663,7 +680,7 @@ function Write-DiagLog([string]$category, [string]$message) {
     $script:diagRingBuffer = [System.Collections.Generic.Queue[string]]::new()
   }
   $line = "[{0}] [{1}] {2}" -f ([DateTimeOffset]::UtcNow.ToString('HH:mm:ss.fff')), $category.ToUpperInvariant(), $message
-  $script:diagRingBuffer.Enqueue($line)
+  $script:diagRingBuffer.Enqueue($line) | Out-Null
   while ($script:diagRingBuffer.Count -gt $script:diagLogMaxEntries) { [void]$script:diagRingBuffer.Dequeue() }
   if ($script:debugLog) {
     try {
@@ -671,6 +688,44 @@ function Write-DiagLog([string]$category, [string]$message) {
     } catch {
       # Avoid recursive diag logging if the file sink itself fails.
     }
+  }
+}
+
+function Write-DiagLog([string]$category, [string]$message) {
+  if ($null -eq $script:diagRingBuffer) {
+    $script:diagRingBuffer = [System.Collections.Generic.Queue[string]]::new()
+  }
+  $line = "[{0}] [{1}] {2}" -f ([DateTimeOffset]::UtcNow.ToString('HH:mm:ss.fff')), $category.ToUpperInvariant(), $message
+  $script:diagRingBuffer.Enqueue($line) | Out-Null
+  while ($script:diagRingBuffer.Count -gt $script:diagLogMaxEntries) { [void]$script:diagRingBuffer.Dequeue() }
+  if ($script:debugLog) {
+    try {
+      Add-Content -LiteralPath $script:debugLog -Value $line -Encoding UTF8
+    } catch {}
+  }
+}
+
+function Write-DiagLog([string]$category, [string]$message) {
+  if ($null -eq $script:diagRingBuffer) {
+    $script:diagRingBuffer = [System.Collections.Generic.Queue[string]]::new()
+  }
+  $line = "[{0}] [{1}] {2}" -f ([DateTimeOffset]::UtcNow.ToString('HH:mm:ss.fff')), $category.ToUpperInvariant(), $message
+  $script:diagRingBuffer.Enqueue($line) | Out-Null
+  while ($script:diagRingBuffer.Count -gt $script:diagLogMaxEntries) { [void]$script:diagRingBuffer.Dequeue() }
+  if ($script:debugLog) {
+    try { Add-Content -LiteralPath $script:debugLog -Value $line -Encoding UTF8 } catch {}
+  }
+}
+
+function Write-DiagLog([string]$category, [string]$message) {
+  if ($null -eq $script:diagRingBuffer) {
+    $script:diagRingBuffer = [System.Collections.Generic.Queue[string]]::new()
+  }
+  $line = "[{0}] [{1}] {2}" -f ([DateTimeOffset]::UtcNow.ToString('HH:mm:ss.fff')), $category.ToUpperInvariant(), $message
+  $script:diagRingBuffer.Enqueue($line) | Out-Null
+  while ($script:diagRingBuffer.Count -gt $script:diagLogMaxEntries) { [void]$script:diagRingBuffer.Dequeue() }
+  if ($script:debugLog) {
+    try { Add-Content -LiteralPath $script:debugLog -Value $line -Encoding UTF8 } catch {}
   }
 }
 
@@ -949,17 +1004,72 @@ $state = [PSCustomObject]@{
 }
 $script:lineIndex = @(0)
 
-# ── flat-buffer primitives ───────────────────────────────────────────────────
 
-function BufText { $state.Buffer.ToString() }
-function BufLen { $state.Buffer.Length }
 
 function Rebuild-LineIndex {
   $text = $state.Buffer.ToString()
   $starts = [System.Collections.Generic.List[int]]::new()
-  $starts.Add(0)
+  $starts.Add(0) | Out-Null
   for ($i = 0; $i -lt $text.Length; $i++) {
-    if ($text[$i] -eq "`n") { $starts.Add($i + 1) }
+    if ($text[$i] -eq "`n") { $starts.Add($i + 1) | Out-Null }
+  }
+  $script:lineIndex = $starts.ToArray()
+}
+
+function Find-LineRow([int]$offset) {
+  $idx = $script:lineIndex
+  if ($null -eq $idx -or $idx.Length -eq 0) { return 0 }
+  $lo = 0; $hi = $idx.Length - 1
+  while ($lo -le $hi) {
+    $mid = [int](($lo + $hi) / 2)
+    if ($idx[$mid] -le $offset) {
+      if ($mid -eq ($idx.Length - 1) -or $idx[$mid + 1] -gt $offset) { return $mid }
+      $lo = $mid + 1
+    } else { $hi = $mid - 1 }
+  }
+  return 0
+}
+
+$script:lineIndex = @(0)
+
+
+
+function Rebuild-LineIndex {
+  $text = $state.Buffer.ToString()
+  $starts = [System.Collections.Generic.List[int]]::new()
+  $starts.Add(0) | Out-Null
+  for ($i = 0; $i -lt $text.Length; $i++) {
+    if ($text[$i] -eq "`n") { $starts.Add($i + 1) | Out-Null }
+  }
+  $script:lineIndex = $starts.ToArray()
+}
+
+function Find-LineRow([int]$offset) {
+  $idx = $script:lineIndex
+  if ($null -eq $idx -or $idx.Length -eq 0) { return 0 }
+  $lo = 0; $hi = $idx.Length - 1
+  while ($lo -le $hi) {
+    $mid = [int](($lo + $hi) / 2)
+    if ($idx[$mid] -le $offset) {
+      if ($mid -eq ($idx.Length - 1) -or $idx[$mid + 1] -gt $offset) { return $mid }
+      $lo = $mid + 1
+    } else { $hi = $mid - 1 }
+  }
+  return 0
+}
+
+$script:lineIndex = @(0)
+
+$script:lineIndex = @(0)
+
+
+
+function Rebuild-LineIndex {
+  $text = $state.Buffer.ToString()
+  $starts = [System.Collections.Generic.List[int]]::new()
+  $starts.Add(0) | Out-Null
+  for ($i = 0; $i -lt $text.Length; $i++) {
+    if ($text[$i] -eq "`n") { $starts.Add($i + 1) | Out-Null }
   }
   $script:lineIndex = $starts.ToArray()
 }
@@ -981,10 +1091,65 @@ function Find-LineRow([int]$offset) {
   return 0
 }
 
-# ── flat-buffer primitives ───────────────────────────────────────────────────
 
-function BufText { $state.Buffer.ToString() }
-function BufLen { $state.Buffer.Length }
+function Rebuild-LineIndex {
+  $text = $state.Buffer.ToString()
+  $starts = [System.Collections.Generic.List[int]]::new()
+  $starts.Add(0) | Out-Null
+  for ($i = 0; $i -lt $text.Length; $i++) {
+    if ($text[$i] -eq "`n") { $starts.Add($i + 1) | Out-Null }
+  }
+  $script:lineIndex = $starts.ToArray()
+}
+
+function Find-LineRow([int]$offset) {
+  $idx = $script:lineIndex
+  if ($null -eq $idx -or $idx.Length -eq 0) { return 0 }
+  $lo = 0
+  $hi = $idx.Length - 1
+  while ($lo -le $hi) {
+    $mid = [int](($lo + $hi) / 2)
+    if ($idx[$mid] -le $offset) {
+      if ($mid -eq ($idx.Length - 1) -or $idx[$mid + 1] -gt $offset) { return $mid }
+      $lo = $mid + 1
+    } else {
+      $hi = $mid - 1
+    }
+  }
+  return 0
+}
+
+$script:lineIndex = @(0)
+
+
+
+function Rebuild-LineIndex {
+  $text = $state.Buffer.ToString()
+  $starts = [System.Collections.Generic.List[int]]::new()
+  $starts.Add(0) | Out-Null
+  for ($i = 0; $i -lt $text.Length; $i++) {
+    if ($text[$i] -eq "`n") { $starts.Add($i + 1) | Out-Null }
+  }
+  $script:lineIndex = $starts.ToArray()
+}
+
+function Find-LineRow([int]$offset) {
+  $idx = $script:lineIndex
+  if ($null -eq $idx -or $idx.Length -eq 0) { return 0 }
+  $lo = 0
+  $hi = $idx.Length - 1
+  while ($lo -le $hi) {
+    $mid = [int](($lo + $hi) / 2)
+    if ($idx[$mid] -le $offset) {
+      if ($mid -eq ($idx.Length - 1) -or $idx[$mid + 1] -gt $offset) { return $mid }
+      $lo = $mid + 1
+    } else {
+      $hi = $mid - 1
+    }
+  }
+  return 0
+}
+
 function BufSet([string]$text) {
   # BufSet is the sole buffer mutation chokepoint. Rebuilding the line-start cache here
   # keeps the hot-path cursor helpers fast while making cache invalidation impossible to forget.
@@ -1020,6 +1185,18 @@ function LineEnd([int]$offset) {
 # Text of logical line $n (0-based); $null when out of range
 function GetLine([int]$n) {
   if ($n -lt 0 -or $n -ge $script:lineIndex.Length) { return $null }
+  $start = $script:lineIndex[$n]
+  $end = if ($n -lt ($script:lineIndex.Length - 1)) { $script:lineIndex[$n + 1] - 1 } else { BufLen }
+  return (BufText).Substring($start, $end - $start)
+}
+  $start = $script:lineIndex[$n]
+  $end = if ($n -lt ($script:lineIndex.Length - 1)) { $script:lineIndex[$n + 1] - 1 } else { BufLen }
+  return (BufText).Substring($start, $end - $start)
+}
+  $start = $script:lineIndex[$n]
+  $end = if ($n -lt ($script:lineIndex.Length - 1)) { $script:lineIndex[$n + 1] - 1 } else { BufLen }
+  return (BufText).Substring($start, $end - $start)
+}
   $start = $script:lineIndex[$n]
   $end = if ($n -lt ($script:lineIndex.Length - 1)) { $script:lineIndex[$n + 1] - 1 } else { BufLen }
   return (BufText).Substring($start, $end - $start)
@@ -1305,7 +1482,7 @@ function Render-Frame {
 
   if ($script:lastRows.Count -ne $height) {
     Reset-RenderShadow
-    for ($i = 0; $i -lt $height; $i++) { $script:lastRows.Add('') }
+    for ($i = 0; $i -lt $height; $i++) { $script:lastRows.Add('') | Out-Null }
     Out-Flush("`e[2J`e[?25l")
     $script:lastCursorVisible = $false
   }
@@ -1449,7 +1626,7 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
         Set-ClipboardText $text; $state.Message = ' Copied to clipboard '; return
       }
       'V' { Paste-Text (Get-ClipboardText); return }
-      'H' { Show-Help; return }
+      'H' { if ($ctrl) { Show-Help; return } }
     }
     return
   }
@@ -1665,14 +1842,22 @@ function Edit-Babae {
       Update-Scroll
       Render-Frame
 
-      # Windows-only: poll for right-click paste via Win32 mouse events.
-      if ($script:mouseEnabled -and -not $script:diagPaneVisible -and -not (Stdin-DataAvailable)) {
+            # Windows-only: poll for right-click paste via Win32 mouse events.
+      if ($script:mouseEnabled -and -not $script:diagPaneVisible) {
         if ([BabaeWin]::PollRightClick($script:consoleHandle)) {
           Paste-Text (Get-ClipboardText)
           continue
         }
-        Start-Sleep -Milliseconds $script:frameDelayMs
-        continue
+      }
+      }
+
+            # Windows-only: poll for right-click paste via Win32 mouse events.
+      if ($script:mouseEnabled -and -not $script:diagPaneVisible) {
+        if ([BabaeWin]::PollRightClick($script:consoleHandle)) {
+          Paste-Text (Get-ClipboardText)
+          continue
+        }
+      }
       }
 
       # Non-blocking: skip Read-NextInputEvent when nothing is waiting.
