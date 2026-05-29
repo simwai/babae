@@ -468,11 +468,8 @@ function Stdin-ReadKey {
       Write-DiagLog 'INPUT' "Input thread failed: $($ki.Message)"
       continue
     }
-    # Console.ReadKey maps Ctrl+H (byte 8) to Key=Backspace — remap it so
-  # Handle-EditKey sees Key=H with Control modifier, matching the raw-path behaviour.
-    if ([int]$ki.KeyChar -eq 8) {
-      return Make-KeyInfo ([char]8) ([System.ConsoleKey]::H) ([System.ConsoleModifiers]::Control)
-    }
+
+    if ([int]$ki.KeyChar -eq 8) { return Make-KeyInfo ([char]8) ([System.ConsoleKey]::Backspace) 0 }
     return $ki
   }
 }
@@ -596,7 +593,7 @@ function Read-NextInputEvent {
     13  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]13)  ([System.ConsoleKey]::Enter)     0) } }
     127 { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
     # Ctrl+H (byte 8) → open Help. Backspace uses byte 127 (DEL) on xterm/Bitvise.
-    8   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]8) ([System.ConsoleKey]::H) ([System.ConsoleModifiers]::Control)) } }
+    8   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]8) ([System.ConsoleKey]::Backspace) 0) } }
     9   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]9)   ([System.ConsoleKey]::Tab)       0) } }
     27  {}  # handled above
     28  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]28) ([System.ConsoleKey]::D4)        ([System.ConsoleModifiers]::Control)) } }
