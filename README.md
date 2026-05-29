@@ -3,14 +3,14 @@
   <img src="https://img.shields.io/badge/Platform-Linux%20%7C%20macOS%20%7C%20Windows-5b21b6?style=flat&logoColor=white" alt="Cross-platform" />
   <img src="https://img.shields.io/badge/SSH-xterm--256color-6d28d9?style=flat&logoColor=white" alt="SSH / xterm-256color" />
   <img src="https://img.shields.io/badge/Pester-5.x-7c3aed?style=flat&logoColor=white" alt="Pester 5" />
-  <img src="https://img.shields.io/badge/Status-Highly%20Experimental-ff4444?style=flat&logoColor=white" alt="Highly Experimental" />
+  <img src="https://img.shields.io/badge/Status-Experimental-orange?style=flat&logoColor=white" alt="Experimental" />
   <img src="https://img.shields.io/badge/License-MIT-8b5cf6?style=flat&logoColor=white" alt="MIT License" />
 </p>
 
 ---
 
-> [!WARNING]
-> **babae is highly experimental.** It is a quick and dirty attempt at building a PowerShell-based TUI code editor. Expect rough edges, missing features, and occasional cursed behaviour. Use at your own risk — preferably not on production systems.
+> [!IMPORTANT]
+> **babae is currently in an experimental state.** While it is designed to be a lightweight and efficient editor, it is not yet fully stable. Please be aware that bugs may occur, and there is a risk of file corruption when editing. It is recommended to use it on non-critical files and keep backups.
 
 <!-- toc -->
 
