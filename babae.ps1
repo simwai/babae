@@ -46,7 +46,9 @@ if (-not [Console]::IsInputRedirected -and -not $Env:BABAE_SKIP_INSTALL) {
           $shouldUpdate = $true
           $msg = " A different version of babae is installed globally. Update it? (y/n): "
         }
-      } catch {}
+      } catch {
+      $q.Enqueue([PSCustomObject]@{ Kind = 'Diag'; Message = $_.Exception.Message })
+    }
     }
 
     if ($shouldUpdate) {
@@ -168,7 +170,10 @@ $script:inputPending  = [System.Collections.Generic.Queue[byte]]::new()
 # Detect once whether stdin is a real console or redirected.
 # We cache this to pick the right non-blocking check in the hot path.
 $script:stdinIsConsole = $true
-try { [void][Console]::KeyAvailable } catch { $script:stdinIsConsole = $false }
+try { [void][Console]::KeyAvailable } catch {
+  $script:stdinIsConsole = $false
+  Write-DiagLog 'INPUT' "Console key-availability probe failed: $($_.Exception.Message)"
+}
 
 # Single outstanding async read task — ALWAYS reads into the shared inputBuf.
 # Rule: at most one ReadAsync in flight at any time.  Stdin-PeekAvailable calls
@@ -197,7 +202,12 @@ function Stdin-HarvestTask {
 # Harvests any completed task bytes as a side-effect.
 function Stdin-TryDrain {
   if ($script:inputPending.Count -gt 0) { return $true }
-  if ($script:stdinIsConsole) { try { return [Console]::KeyAvailable } catch { $script:stdinIsConsole = $false } }
+  if ($script:stdinIsConsole) {
+    try { return [Console]::KeyAvailable } catch {
+      $script:stdinIsConsole = $false
+      Write-DiagLog 'INPUT' "Console key-availability poll failed: $($_.Exception.Message)"
+    }
+  }
   Stdin-EnsureTask
   if (-not $script:stdinReadTask.IsCompleted) { return $false }
   [void](Stdin-HarvestTask)
@@ -249,7 +259,7 @@ function Stdin-DrainPaste {
 
   $deadline = [System.Diagnostics.Stopwatch]::StartNew()
 
-  while ($deadline.ElapsedMilliseconds -lt 2000) {
+  while ($deadline.ElapsedMilliseconds -lt $script:pasteDeadlineMs) {
     if ($script:inputPending.Count -eq 0) {
       Stdin-PeekAvailable
       if ($script:inputPending.Count -eq 0) {
@@ -406,8 +416,8 @@ function Start-InputThread {
 
 function Stop-InputThread {
   if ($null -ne $script:inputThread) {
-    try { $script:inputThread.Stop() } catch {}
-    try { $script:inputThread.Dispose() } catch {}
+    try { $script:inputThread.Stop() } catch { Write-DiagLog 'INPUT' "Input thread stop failed: $($_.Exception.Message)" }
+    try { $script:inputThread.Dispose() } catch { Write-DiagLog 'INPUT' "Input thread dispose failed: $($_.Exception.Message)" }
     $script:inputThread = $null
   }
 }

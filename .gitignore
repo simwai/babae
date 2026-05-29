@@ -1,0 +1,7 @@
+.babae/
+babae-debug.log
+fix_*
+patch_*.json
+test_*.ps1
+babae_no_run.ps1
+babae_original.ps1
