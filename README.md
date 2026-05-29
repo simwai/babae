@@ -24,7 +24,8 @@
   * [Keybindings](#keybindings)
 - [Themes](#themes)
 - [Language Detection](#language-detection)
-- [The Stairway Paste Fix](#the-stairway-paste-fix)
+- [The Staircase Paste Fix](#the-staircase-paste-fix)
+- [Deep Dive: The Theory of the Terminal](#deep-dive-the-theory-of-the-terminal)
 - [Testing](#testing)
 
 <!-- tocstop -->
@@ -40,7 +41,7 @@ Its primary reason for existence: most terminal editors misbehave when pasting i
 ## Key Features
 
 - **Zero Dependencies**: One file. `pwsh ./babae.ps1`. Done.
-- **SSH-Safe Paste**: Bracketed paste mode (BPM) support across both interactive and redirected stdin paths. Right-click paste over SSH does not staircase — ever. See [The Stairway Paste Fix](#the-stairway-paste-fix).
+- **SSH-Safe Paste**: Bracketed paste mode (BPM) support across both interactive and redirected stdin paths. Right-click paste over SSH does not staircase — ever. See [The Staircase Paste Fix](#the-staircase-paste-fix).
 - **ANSI TUI Rendering**: Low-flicker frame rendering via a shadow row buffer and direct stdout stream writes. Only changed rows are redrawn.
 - **Four Dark Themes**: babae dark, Catppuccin Mocha, Catppuccin Frappe, GitHub Dark. Cycle with `^T`.
 - **Undo / Redo**: Snapshot-based undo stack (up to 200 entries) with `^Z` / `^Y`.
@@ -156,19 +157,17 @@ babae automatically displays a language label in the header bar based on the ope
 | `.sh`, `.bash` | Bash |
 | *(anything else)* | Plain Text |
 
-## The Stairway Paste Fix
+## The Staircase Paste Fix
 
-When pasting multi-line indented text via right-click over SSH (Bitvise, xterm-256color), every `\n` in the paste stream used to hit the `Enter` handler, which re-injected the current line's leading whitespace — compounding it on every successive line and producing an ever-widening staircase of indentation.
+babae solves the "Staircase" bug (compound auto-indentation) using Bracketed Paste Mode (BPM).
 
-This is an [open bug in micro](https://github.com/micro-editor/micro/issues/3571) and stems from editors not properly handling bracketed paste mode (BPM) sentinels (`ESC[200~` / `ESC[201~`), which terminals use to wrap paste payloads so editors can distinguish pasted text from typed input.
+For a deep dive into the anatomy of the bug and the technical implementation of the fix, see:
+👉 **[STAIRCASE.md](STAIRCASE.md)**
 
-babae fixes this by enabling BPM (`ESC[?2004h`) on launch and running a **dual-path input architecture**:
+## Deep Dive: The Theory of the Terminal
 
-- **Interactive mode** (normal terminal use): a background PowerShell runspace reads keys via `[Console]::ReadKey($true)` and pushes them into a `ConcurrentQueue`. When an ESC is detected, babae peeks ahead in the queue to assemble the full sequence. If `ESC[200~` is matched, the paste payload is drained via `Stdin-DrainPasteInteractive` — consuming chars until `ESC[201~` — and routed directly to the insert routine, bypassing the `Enter` handler and its auto-indent logic entirely.
-
-- **Redirected mode** (test harness / piped stdin): babae falls back to reading `Console.OpenStandardInput()` as a raw byte stream. BPM sentinels are detected at the byte level in `Stdin-DrainPaste`, making the test suite independent of any terminal or .NET console abstraction.
-
-In both paths, the paste payload never touches the `Enter` handler. No staircase.
+To understand the core architecture of babae, the .NET/PowerShell APIs used, and the ANSI specifications it follows, check out the comprehensive theory guide:
+👉 **[THEORY.md](THEORY.md)**
 
 ## Testing
 
@@ -185,6 +184,6 @@ Invoke-Pester ./babae.tests.ps1 -Output Detailed
 The suite covers:
 
 - BPM byte-sequence helper unit tests
-- Stairway regression: uniform indent, mixed indent, empty paste, 500-line large paste
+- Staircase regression: uniform indent, mixed indent, empty paste, 500-line large paste
 - Normal key input: printable chars, Enter auto-indent, Ctrl+Z undo/redo
 - Ctrl+V clipboard paste path isolation

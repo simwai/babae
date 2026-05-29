@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    E2E tests for babae — stairway/paste regression + unit coverage.
+    E2E tests for babae — staircase/paste regression + unit coverage.
 
 .DESCRIPTION
-    The stairway bug: when pasting multi-line indented text via right-click
+    The staircase bug: when pasting multi-line indented text via right-click
     over SSH (Bitvise / xterm-256color), each \n in the paste stream was
     processed by the Enter handler, which re-injected the leading whitespace
     of the current line — compounding it on every line and producing a
@@ -118,9 +118,9 @@ Describe 'BPM byte-sequence helpers' {
   }
 }
 
-# ── Stairway regression — core ────────────────────────────────────────────────
+# ── Staircase regression — core ────────────────────────────────────────────────
 
-Describe 'Stairway regression: bracketed paste via raw stdin BPM' {
+Describe 'Staircase regression: bracketed paste via raw stdin BPM' {
 
   It 'inserts multi-line uniformly-indented text verbatim (no staircase)' {
     $out = [IO.Path]::GetTempFileName()

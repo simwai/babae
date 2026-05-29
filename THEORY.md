@@ -30,12 +30,9 @@ When running in a normal terminal, babae spawns a background **PowerShell Runspa
 ### Path B: Redirected (Raw Stdin)
 When babae is piped or run in a test harness (like Pester), `[Console]::ReadKey` often fails or behaves differently. babae detects this via `[Console]::IsInputRedirected` and falls back to reading the raw byte stream from `[Console]::OpenStandardInput()`.
 
-### The Bracketed Paste Fix (The "Stairway" Bug)
-When you paste multi-line text into most terminal editors over SSH, the terminal sends the text as if you were typing it very fast. Each newline (`\n`) triggers the editor's "Auto-indent" feature, causing each successive line to be indented further than the last (the "staircase").
+### The Bracketed Paste Fix
 
-babae fixes this by enabling **Bracketed Paste Mode** (`ESC[?2004h`).
-- The terminal wraps pasted text in sentinels: `ESC[200~` (start) and `ESC[201~` (end).
-- babae's input parser detects these sentinels and switches to a "bulk drain" mode, inserting the text verbatim and bypassing the auto-indent logic.
+See [STAIRCASE.md](STAIRCASE.md) for a detailed explanation of the Staircase bug and how babae solves it.
 
 ---
 
