@@ -3,7 +3,7 @@
     babae - The Zero-Lag, SSH-Safe, TUI Editor
 .DESCRIPTION
     Pure PowerShell TUI editor. No dependencies, no NuGet, no DLLs.
-    ANSI rendering, dark themes, cross-platform clipboard, .editorconfig support.
+    ANSI rendering, syntax highlighting (17 languages), high-contrast dark/light themes, cross-platform clipboard, .editorconfig support.
 .NOTES
     PS installation: https://learn.microsoft.com/en-us/powershell/scripting/install/install-ubuntu?view=powershell-7.6
     babae installation: curl https://raw.githubusercontent.com/BabaDeluxe/babadeluxe-scripts/refs/heads/master/babae.ps1 > babae.ps1
@@ -89,33 +89,213 @@ Write-Host $script:debugLog
 # ---------------------------------------------------------------------------
 # Themes
 # ---------------------------------------------------------------------------
-$script:themeNames = @("dark", "mocha", "frappe", "github-dark")
+$script:themeNames = @("dark", "mocha", "frappe", "github-dark", "latte-contrast")
 $script:themes = @{
   "dark"        = @{
     bg = "48;2;17;15;26"; bgLine = "48;2;24;21;36"; bgGutter = "48;2;20;18;30"; bgBar = "48;2;30;26;48"; bgSelect = "48;2;80;50;140"; bgHeader = "48;2;80;50;140"
     fgNorm = "38;2;220;215;240"; fgMuted = "38;2;110;100;150"; fgAccent = "38;2;189;147;249"; fgLineNum = "38;2;80;70;110"; fgCurNum = "38;2;189;147;249"; fgHeader = "38;2;255;255;255"
     fgSearch = "38;2;255;184;108"; fgDirty = "38;2;255;121;198"; fgSaved = "38;2;80;250;123"; fgTilde = "38;2;60;50;90"; name = "babae dark"
+    fgkeyword = "38;2;203;166;247"; fgstring = "38;2;166;227;161"; fgcomment = "38;2;166;173;200"; fgnumber = "38;2;250;179;135"; fgtype = "38;2;245;194;231"; fgvariable = "38;2;205;214;244"; fgfunction = "38;2;137;180;250"; fgoperator = "38;2;148;226;213"; fgpunctuation = "38;2;166;173;200"; fgconstant = "38;2;235;160;172"
   }
   "mocha"       = @{
     bg = "48;2;30;30;46"; bgLine = "48;2;40;38;53"; bgGutter = "48;2;24;24;37"; bgBar = "48;2;17;17;27"; bgSelect = "48;2;88;91;112"; bgHeader = "48;2;17;17;27"
     fgNorm = "38;2;205;214;244"; fgMuted = "38;2;88;91;112"; fgAccent = "38;2;203;166;247"; fgLineNum = "38;2;88;91;112"; fgCurNum = "38;2;203;166;247"; fgHeader = "38;2;205;214;244"
     fgSearch = "38;2;249;226;175"; fgDirty = "38;2;243;139;168"; fgSaved = "38;2;166;227;161"; fgTilde = "38;2;49;50;68"; name = "Catppuccin Mocha"
+    fgkeyword = "38;2;203;166;247"; fgstring = "38;2;166;227;161"; fgcomment = "38;2;166;173;200"; fgnumber = "38;2;250;179;135"; fgtype = "38;2;245;194;231"; fgvariable = "38;2;205;214;244"; fgfunction = "38;2;137;180;250"; fgoperator = "38;2;148;226;213"; fgpunctuation = "38;2;166;173;200"; fgconstant = "38;2;235;160;172"
   }
   "frappe"      = @{
     bg = "48;2;48;52;70"; bgLine = "48;2;65;69;89"; bgGutter = "48;2;41;44;60"; bgBar = "48;2;35;38;52"; bgSelect = "48;2;98;104;128"; bgHeader = "48;2;35;38;52"
     fgNorm = "38;2;198;208;245"; fgMuted = "38;2;98;104;128"; fgAccent = "38;2;202;158;230"; fgLineNum = "38;2;98;104;128"; fgCurNum = "38;2;202;158;230"; fgHeader = "38;2;198;208;245"
     fgSearch = "38;2;229;200;144"; fgDirty = "38;2;231;130;132"; fgSaved = "38;2;166;209;137"; fgTilde = "38;2;65;69;89"; name = "Catppuccin Frappe"
+    fgkeyword = "38;2;203;166;247"; fgstring = "38;2;166;227;161"; fgcomment = "38;2;166;173;200"; fgnumber = "38;2;250;179;135"; fgtype = "38;2;245;194;231"; fgvariable = "38;2;205;214;244"; fgfunction = "38;2;137;180;250"; fgoperator = "38;2;148;226;213"; fgpunctuation = "38;2;166;173;200"; fgconstant = "38;2;235;160;172"
   }
   "github-dark" = @{
     bg = "48;2;13;17;23"; bgLine = "48;2;22;27;34"; bgGutter = "48;2;13;17;23"; bgBar = "48;2;22;27;34"; bgSelect = "48;2;33;68;118"; bgHeader = "48;2;22;27;34"
     fgNorm = "38;2;230;237;243"; fgMuted = "38;2;110;118;129"; fgAccent = "38;2;210;153;255"; fgLineNum = "38;2;110;118;129"; fgCurNum = "38;2;210;153;255"; fgHeader = "38;2;230;237;243"
     fgSearch = "38;2;255;212;0"; fgDirty = "38;2;248;81;73"; fgSaved = "38;2;63;185;80"; fgTilde = "38;2;33;38;45"; name = "GitHub Dark"
+    fgkeyword = "38;2;203;166;247"; fgstring = "38;2;166;227;161"; fgcomment = "38;2;166;173;200"; fgnumber = "38;2;250;179;135"; fgtype = "38;2;245;194;231"; fgvariable = "38;2;205;214;244"; fgfunction = "38;2;137;180;250"; fgoperator = "38;2;148;226;213"; fgpunctuation = "38;2;166;173;200"; fgconstant = "38;2;235;160;172"
+  }
+  "latte-contrast" = @{
+    bg = "48;2;239;241;245"; bgLine = "48;2;228;230;237"; bgGutter = "48;2;220;224;232"; bgBar = "48;2;204;208;218"; bgSelect = "48;2;188;192;204"; bgHeader = "48;2;204;208;218"
+    fgNorm = "38;2;55;57;77"; fgMuted = "38;2;108;111;133"; fgAccent = "38;2;136;57;239"; fgLineNum = "38;2;156;160;176"; fgCurNum = "38;2;136;57;239"; fgHeader = "38;2;76;79;105"
+    fgSearch = "38;2;254;100;11"; fgDirty = "38;2;210;15;57"; fgSaved = "38;2;64;160;43"; fgTilde = "38;2;188;192;204"; name = "latte-contrast"
+    fgkeyword = "38;2;88;37;148"; fgstring = "38;2;32;82;21"; fgcomment = "38;2;67;71;80"; fgnumber = "38;2;180;70;0"; fgtype = "38;2;102;32;83"; fgvariable = "38;2;45;48;65"; fgfunction = "38;2;16;58;156"; fgoperator = "38;2;12;92;96"; fgpunctuation = "38;2;85;88;104"; fgconstant = "38;2;178;36;54"
   }
 }
+
 $script:themeIdx = [Math]::Max(0, $script:themeNames.IndexOf($Theme))
 function T([string]$key) { "`e[$($script:themes[$script:themeNames[$script:themeIdx]][$key])m" }
 $RESET = "`e[0m"
 $BOLD = "`e[1m"
+
+$script:syntaxRules = @{
+  "JavaScript" = @(
+    @{ Re = [regex]::new('//.*$', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new('/\*[\s\S]*?\*/', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new("'(?:[^'\\]|\\.)*'", 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('"(?:[^"\\]|\\.)*"', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('`(?:[^`\\]|\\.)*`', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('\b(if|else|for|while|do|switch|case|break|continue|return|function|var|let|const|class|extends|new|this|super|import|export|default|from|as|async|await|try|catch|finally|throw)\b', 'Compiled'); Type = 'keyword' }
+    @{ Re = [regex]::new('\b(true|false|null|undefined)\b', 'Compiled'); Type = 'constant' }
+    @{ Re = [regex]::new('\b\d+(\.\d+)?([eE][+-]?\d+)?\b', 'Compiled'); Type = 'number' }
+    @{ Re = [regex]::new('\b[A-Z][a-zA-Z0-9_]*\b', 'Compiled'); Type = 'type' }
+    @{ Re = [regex]::new('\b[a-zA-Z_$][\w$]*(?=\s*[\(])', 'Compiled'); Type = 'function' }
+    @{ Re = [regex]::new('[\+\-\*\/%<>=!&|^~?:]+', 'Compiled'); Type = 'operator' }
+    @{ Re = [regex]::new('[.,;{}\[\]()]', 'Compiled'); Type = 'punctuation' }
+  )
+  "TypeScript" = @(
+    @{ Re = [regex]::new('//.*$', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new('/\*[\s\S]*?\*/', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new("'(?:[^'\\]|\\.)*'", 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('"(?:[^"\\]|\\.)*"', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('`(?:[^`\\]|\\.)*`', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('\b(if|else|for|while|do|switch|case|break|continue|return|function|var|let|const|class|extends|new|this|super|import|export|default|from|as|async|await|try|catch|finally|throw)\b', 'Compiled'); Type = 'keyword' }
+    @{ Re = [regex]::new('\b(true|false|null|undefined)\b', 'Compiled'); Type = 'constant' }
+    @{ Re = [regex]::new('\b\d+(\.\d+)?([eE][+-]?\d+)?\b', 'Compiled'); Type = 'number' }
+    @{ Re = [regex]::new('\b[A-Z][a-zA-Z0-9_]*\b', 'Compiled'); Type = 'type' }
+    @{ Re = [regex]::new('\b[a-zA-Z_$][\w$]*(?=\s*[\(])', 'Compiled'); Type = 'function' }
+    @{ Re = [regex]::new('[\+\-\*\/%<>=!&|^~?:]+', 'Compiled'); Type = 'operator' }
+    @{ Re = [regex]::new('[.,;{}\[\]()]', 'Compiled'); Type = 'punctuation' }
+  )
+  "Python" = @(
+    @{ Re = [regex]::new('#.*$', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new("\x27\x27\x27[\\s\\S]*?\x27\x27\x27|\x22\x22\x22[\\s\\S]*?\x22\x22\x22", 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('"(?:[^"\\]|\\.)*"', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new("'(?:[^'\\]|\\.)*'", 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('\b(if|elif|else|for|while|def|class|import|from|as|return|yield|with|try|except|finally|raise|break|continue|pass|and|or|not|in|is|None|True|False)\b', 'Compiled'); Type = 'keyword' }
+    @{ Re = [regex]::new('\b\d+(\.\d+)?([eE][+-]?\d+)?\b', 'Compiled'); Type = 'number' }
+    @{ Re = [regex]::new('\b[A-Z][a-zA-Z0-9_]*\b', 'Compiled'); Type = 'type' }
+    @{ Re = [regex]::new('\b[a-zA-Z_]\w*(?=\s*[\(])', 'Compiled'); Type = 'function' }
+    @{ Re = [regex]::new('[\+\-\*\/%<>=!&|^~]+', 'Compiled'); Type = 'operator' }
+    @{ Re = [regex]::new('[.,;{}\[\]()]', 'Compiled'); Type = 'punctuation' }
+  )
+  "PowerShell" = @(
+    @{ Re = [regex]::new('#.*$', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new('<#[\s\S]*?#>', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new("'(?:[^']|'')*'", 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('"(?:[^"\\]|\\.)*"', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('\b(if|else|elseif|foreach|for|while|do|switch|case|default|return|break|continue|function|filter|param|begin|process|end|throw|try|catch|finally|trap|class|enum|using|namespace|in|and|or|not)\b', 'Compiled'); Type = 'keyword' }
+    @{ Re = [regex]::new('\$\w+', 'Compiled'); Type = 'variable' }
+    @{ Re = [regex]::new('\b\d+(\.\d+)?\b', 'Compiled'); Type = 'number' }
+    @{ Re = [regex]::new('[\+\-\*\/%<>=!&|^~]+', 'Compiled'); Type = 'operator' }
+    @{ Re = [regex]::new('[.,;{}\[\]()]', 'Compiled'); Type = 'punctuation' }
+  )
+  "Bash" = @(
+    @{ Re = [regex]::new('#.*$', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new('"(?:[^"\\]|\\.)*"', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new("'(?:[^']|'')*'", 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('\b(if|then|else|elif|fi|for|while|do|done|case|esac|function|return|exit|source|export|local|readonly|declare|shift|trap|break|continue)\b', 'Compiled'); Type = 'keyword' }
+    @{ Re = [regex]::new('\$\{?\w+', 'Compiled'); Type = 'variable' }
+    @{ Re = [regex]::new('\b\d+\b', 'Compiled'); Type = 'number' }
+    @{ Re = [regex]::new('[+\-*/%<>=!&|^~]+', 'Compiled'); Type = 'operator' }
+    @{ Re = [regex]::new('[.,;{}\[\]()]', 'Compiled'); Type = 'punctuation' }
+  )
+  "HTML" = @(
+    @{ Re = [regex]::new('<!--[\s\S]*?-->', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new('"[^"]*"', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new("'[^']*'", 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('</?[a-zA-Z0-9]+', 'Compiled'); Type = 'keyword' }
+    @{ Re = [regex]::new('>\s*[^<]+', 'Compiled'); Type = 'plain' }
+  )
+  "CSS" = @(
+    @{ Re = [regex]::new('/\*[\s\S]*?\*/', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new('"[^"]*"', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new("'[^']*'", 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('\b(azimuth|background|border|color|cursor|display|font|height|left|margin|padding|position|right|top|width|z-index|important)\b', 'Compiled'); Type = 'keyword' }
+    @{ Re = [regex]::new('#[0-9a-fA-F]{3,8}', 'Compiled'); Type = 'number' }
+    @{ Re = [regex]::new('\b\d+(\.\d+)?(px|em|rem|%|vw|vh)?\b', 'Compiled'); Type = 'number' }
+    @{ Re = [regex]::new('[{};:]', 'Compiled'); Type = 'punctuation' }
+  )
+  "SVG" = @(
+    @{ Re = [regex]::new('<!--[\s\S]*?-->', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new('"[^"]*"', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new("'[^']*'", 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('</?[a-zA-Z_:][\w:.-]*', 'Compiled'); Type = 'keyword' }
+    @{ Re = [regex]::new('[{}><]', 'Compiled'); Type = 'punctuation' }
+  )
+  "JSON" = @(
+    @{ Re = [regex]::new('"(?:[^"\\]|\\.)*"', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('\b(true|false|null)\b', 'Compiled'); Type = 'constant' }
+    @{ Re = [regex]::new('-?\b\d+(\.\d+)?([eE][+-]?\d+)?\b', 'Compiled'); Type = 'number' }
+    @{ Re = [regex]::new('[{}[\],:]', 'Compiled'); Type = 'punctuation' }
+  )
+  "JSONC" = @(
+    @{ Re = [regex]::new('//.*$', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new('/\*[\s\S]*?\*/', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new('"(?:[^"\\]|\\.)*"', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('\b(true|false|null)\b', 'Compiled'); Type = 'constant' }
+    @{ Re = [regex]::new('-?\b\d+(\.\d+)?([eE][+-]?\d+)?\b', 'Compiled'); Type = 'number' }
+    @{ Re = [regex]::new('[{}[\],:]', 'Compiled'); Type = 'punctuation' }
+  )
+  "JSONL" = @(
+    @{ Re = [regex]::new('"(?:[^"\\]|\\.)*"', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('\b(true|false|null)\b', 'Compiled'); Type = 'constant' }
+    @{ Re = [regex]::new('-?\b\d+(\.\d+)?([eE][+-]?\d+)?\b', 'Compiled'); Type = 'number' }
+    @{ Re = [regex]::new('[{}[\],:]', 'Compiled'); Type = 'punctuation' }
+  )
+  "YAML" = @(
+    @{ Re = [regex]::new('#.*$', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new('"(?:[^"\\]|\\.)*"', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new("'(?:[^']|'')*'", 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('\b(true|false|null)\b', 'Compiled'); Type = 'constant' }
+    @{ Re = [regex]::new('-?\b\d+(\.\d+)?\b', 'Compiled'); Type = 'number' }
+    @{ Re = [regex]::new('[\[\]{}:>|]', 'Compiled'); Type = 'punctuation' }
+  )
+  "TOML" = @(
+    @{ Re = [regex]::new('#.*$', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new('"(?:[^"\\]|\\.)*"', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new("'(?:[^'\\]|'')*'", 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('\b(true|false)\b', 'Compiled'); Type = 'constant' }
+    @{ Re = [regex]::new('-?\b\d+(\.\d+)?\b', 'Compiled'); Type = 'number' }
+    @{ Re = [regex]::new('[\[\]{}.,=]', 'Compiled'); Type = 'punctuation' }
+  )
+  "dotenv" = @(
+    @{ Re = [regex]::new('#.*$', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new('"[^"]*"', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new("'[^']*'", 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('\b\d+(\.\d+)?\b', 'Compiled'); Type = 'number' }
+    @{ Re = [regex]::new('[=]', 'Compiled'); Type = 'operator' }
+  )
+  "Java" = @(
+    @{ Re = [regex]::new('//.*$', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new('/\*[\s\S]*?\*/', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new('"(?:[^"\\]|\\.)*"', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('\b(if|else|for|while|do|switch|case|break|continue|return|class|interface|extends|implements|new|this|super|import|package|try|catch|finally|throw|throws|public|private|protected|static|final|void|int|long|double|boolean|char|byte|short|float|String)\b', 'Compiled'); Type = 'keyword' }
+    @{ Re = [regex]::new('\b(true|false|null)\b', 'Compiled'); Type = 'constant' }
+    @{ Re = [regex]::new('\b\d+(\.\d+)?([eE][+-]?\d+)?\b', 'Compiled'); Type = 'number' }
+    @{ Re = [regex]::new('\b[A-Z][a-zA-Z0-9_]*\b', 'Compiled'); Type = 'type' }
+    @{ Re = [regex]::new('\b[a-zA-Z_]\w*(?=\s*[\(])', 'Compiled'); Type = 'function' }
+    @{ Re = [regex]::new('[+\-*/%<>=!&|^~?:]+', 'Compiled'); Type = 'operator' }
+    @{ Re = [regex]::new('[.,;{}\[\]()]', 'Compiled'); Type = 'punctuation' }
+  )
+  "C#" = @(
+    @{ Re = [regex]::new('//.*$', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new('/\*[\s\S]*?\*/', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new('"(?:[^"\\]|\\.)*"', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('\b(if|else|for|foreach|while|do|switch|case|break|continue|return|class|struct|interface|enum|namespace|using|new|this|base|public|private|protected|internal|static|readonly|virtual|override|abstract|sealed|async|await|try|catch|finally|throw|int|long|float|double|decimal|bool|char|string|var|void|object|dynamic)\b', 'Compiled'); Type = 'keyword' }
+    @{ Re = [regex]::new('\b(true|false|null)\b', 'Compiled'); Type = 'constant' }
+    @{ Re = [regex]::new('\b\d+(\.\d+)?([eE][+-]?\d+)?\b', 'Compiled'); Type = 'number' }
+    @{ Re = [regex]::new('\b[A-Z][a-zA-Z0-9_]*\b', 'Compiled'); Type = 'type' }
+    @{ Re = [regex]::new('\b[a-zA-Z_]\w*(?=\s*[\(])', 'Compiled'); Type = 'function' }
+    @{ Re = [regex]::new('[+\-*/%<>=!&|^~?:]+', 'Compiled'); Type = 'operator' }
+    @{ Re = [regex]::new('[.,;{}\[\]()]', 'Compiled'); Type = 'punctuation' }
+  )
+  "Markdown" = @(
+    @{ Re = [regex]::new('^#{1,6}.*$', 'Compiled'); Type = 'keyword' }
+    @{ Re = [regex]::new('\[.*?\]\(.*?\)', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('`{1,3}[^`]*`{1,3}', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('^[*-+]\s.*$', 'Compiled'); Type = 'punctuation' }
+  )
+  "Dockerfile" = @(
+    @{ Re = [regex]::new('#.*$', 'Compiled'); Type = 'comment' }
+    @{ Re = [regex]::new('"(?:[^"\\]|\\.)*"', 'Compiled'); Type = 'string' }
+    @{ Re = [regex]::new('\b(FROM|RUN|CMD|LABEL|EXPOSE|ENV|ADD|COPY|ENTRYPOINT|VOLUME|USER|WORKDIR|ARG|SHELL)\b', 'Compiled'); Type = 'keyword' }
+    @{ Re = [regex]::new('\$\{?\w+\}?', 'Compiled'); Type = 'variable' }
+    @{ Re = [regex]::new('\b\d+\b', 'Compiled'); Type = 'number' }
+    @{ Re = [regex]::new('[=]', 'Compiled'); Type = 'operator' }
+  )
+}
+
 
 # ---------------------------------------------------------------------------
 # Low-flicker output: direct stdout stream + row shadow buffer
@@ -807,25 +987,65 @@ public static class BabaeWin {
 # ---------------------------------------------------------------------------
 # Editor state
 # ---------------------------------------------------------------------------
+
+function Get-LineTokens {
+    param([string]$line, [string]$language)
+    if (-not $script:syntaxRules.ContainsKey($language)) { return @() }
+    $rules = $script:syntaxRules[$language]
+    $tokens = [System.Collections.Generic.List[object]]::new()
+    $pos = 0
+    while ($pos -lt $line.Length) {
+        $best = $null
+        foreach ($rule in $rules) {
+            $m = $rule.Re.Match($line, $pos)
+            if ($m.Success -and $m.Index -eq $pos -and
+                ($null -eq $best -or $m.Length -gt $best.Length)) {
+                $best = @{ Start = $pos; Length = $m.Length; Type = $rule.Type }
+            }
+        }
+        if ($best) {
+            $tokens.Add([PSCustomObject]$best)
+            $pos += $best.Length
+        } else {
+            $pos++
+        }
+    }
+    return $tokens
+}
+
 function Get-Language([string]$fp) {
-  if ([string]::IsNullOrEmpty($fp)) { return 'Plain Text' }
-  switch ([IO.Path]::GetExtension($fp).ToLowerInvariant()) {
-    '.ps1' { 'PowerShell' }
-    '.psm1' { 'PowerShell' }
-    '.psd1' { 'PowerShell' }
-    '.cs' { 'C#' }
-    '.ts' { 'TypeScript' }
-    '.tsx' { 'TypeScript' }
-    '.js' { 'JavaScript' }
-    '.jsx' { 'JavaScript' }
-    '.py' { 'Python' }
-    '.json' { 'JSON' }
-    '.md' { 'Markdown' }
-    '.sh' { 'Bash' }
-    '.bash' { 'Bash' }
-    default { 'Plain Text' }
+  if ([string]::IsNullOrEmpty($fp)) { return "Plain Text" }
+  $fn = [IO.Path]::GetFileName($fp).ToLowerInvariant()
+  $ext = [IO.Path]::GetExtension($fp).ToLowerInvariant()
+  if ($fn -eq "dockerfile" -or $ext -eq ".dockerfile") { return "Dockerfile" }
+  if ($fn.StartsWith(".env")) { return "dotenv" }
+  switch ($ext) {
+    ".ts"   { "TypeScript" }
+    ".tsx"  { "TypeScript" }
+    ".js"   { "JavaScript" }
+    ".jsx"  { "JavaScript" }
+    ".py"   { "Python" }
+    ".ps1"  { "PowerShell" }
+    ".psm1" { "PowerShell" }
+    ".psd1" { "PowerShell" }
+    ".sh"   { "Bash" }
+    ".bash" { "Bash" }
+    ".html" { "HTML" }
+    ".css"  { "CSS" }
+    ".svg"  { "SVG" }
+    ".json" { "JSON" }
+    ".jsonc"{ "JSONC" }
+    ".jsonl"{ "JSONL" }
+    ".yaml" { "YAML" }
+    ".yml"  { "YAML" }
+    ".toml" { "TOML" }
+    ".java" { "Java" }
+    ".cs"   { "C#" }
+    ".md"   { "Markdown" }
+    default { "Plain Text" }
   }
 }
+
 
 $state = [PSCustomObject]@{
   Buffer       = [System.Text.StringBuilder]::new()
@@ -834,6 +1054,7 @@ $state = [PSCustomObject]@{
   ScrollRow    = 0
   FilePath     = ''
   Language     = 'Plain Text'
+  TokenCache   = @{}
   Dirty        = $false
   Message      = ''
   LastSearch   = ''
@@ -850,6 +1071,7 @@ $state = [PSCustomObject]@{
 function BufText { $state.Buffer.ToString() }
 function BufLen { $state.Buffer.Length }
 function BufSet([string]$text) {
+  $state.TokenCache = @{}
   $state.Buffer.Clear() | Out-Null
   if ($text) { $state.Buffer.Append($text) | Out-Null }
 }
@@ -922,6 +1144,7 @@ function SelBounds {
 }
 
 function State-Reset {
+  $state.TokenCache = @{}
   BufSet ''
   $state.Cursor = 0; $state.PreferredCol = 0; $state.ScrollRow = 0
   $state.FilePath = ''; $state.Language = 'Plain Text'
@@ -932,6 +1155,7 @@ function State-Reset {
 }
 
 function State-LoadFile([string]$path) {
+  $state.TokenCache = @{}
   $state.FilePath = $path
   $state.Language = Get-Language $path
   $raw = if (Test-Path $path) {
@@ -962,6 +1186,7 @@ function State-SaveFile {
 }
 
 function State-Snapshot {
+  $state.TokenCache = @{}
   if ($state.UndoStack.Count -ge 200) {
     $arr = $state.UndoStack.ToArray(); $state.UndoStack.Clear()
     # Keep newest 100, discard oldest 100 — amortized O(1) trim
@@ -1081,6 +1306,7 @@ function Build-EditorRow([int]$rowIndex, [int]$screenWidth, [int]$textWidth) {
     return "$barLeft$(' ' * $pad)$right"
   }
 
+
   # ── content row ─────────────────────────────────────────────────────────
   $lineIdx = $rowIndex - 1 + $state.ScrollRow
   $lineText = GetLine $lineIdx
@@ -1101,32 +1327,103 @@ function Build-EditorRow([int]$rowIndex, [int]$screenWidth, [int]$textWidth) {
   $bg = if ($isCurrent) { T 'bgLine' } else { T 'bg' }
 
   $lineOffset = RowColToOffset $lineIdx 0
-  $lineEndOff = $lineOffset + $lineText.Length
   $rulerCol = if ($script:ec.max_line_length -gt 0) { $script:ec.max_line_length } else { -1 }
-  $lineInSel = $state.SelActive -and ($selA -lt $lineEndOff) -and ($selB -gt $lineOffset)
 
-  if (-not $lineInSel -and ($rulerCol -lt 0 -or $rulerCol -ge $textWidth)) {
-    $pad = [Math]::Max(0, $textWidth - $slice.Length)
-    return "$gutter$bg$(T 'fgNorm')$slice$(' ' * $pad)$RESET"
+  $cacheKey = "$lineIdx`:$lineText"
+  if (-not $state.TokenCache.ContainsKey($cacheKey)) {
+    $state.TokenCache[$cacheKey] = Get-LineTokens $lineText $state.Language
   }
+  $tokens = $state.TokenCache[$cacheKey]
 
   $sb = [System.Text.StringBuilder]::new()
-  [void]$sb.Append($gutter); [void]$sb.Append($bg)
-  for ($ci = 0; $ci -lt $textWidth; $ci++) {
-    $absOff = $lineOffset + $ci
-    $ch = if ($ci -lt $slice.Length) { [string]$slice[$ci] } else { ' ' }
-    $inSel = $state.SelActive -and $absOff -ge $selA -and $absOff -lt $selB
-    if ($inSel) {
-      [void]$sb.Append("$(T 'bgSel')$(T 'fgSel')$ch$bg$(T 'fgNorm')")
-    } elseif ($rulerCol -ge 0 -and $ci -eq $rulerCol) {
-      [void]$sb.Append("$(T 'fgRuler')│$(T 'fgNorm')")
-    } else {
-      [void]$sb.Append($ch)
+  [void]$sb.Append($gutter)
+  [void]$sb.Append($bg)
+
+  $lastCol = 0
+  foreach ($token in $tokens) {
+    if ($token.Start -ge $textWidth) { break }
+    if ($token.Start -gt $lastCol) {
+      $pLen = [Math]::Min($token.Start - $lastCol, $textWidth - $lastCol)
+      $plain = $slice.Substring($lastCol, $pLen)
+
+      for ($i = 0; $i -lt $plain.Length; $i++) {
+        $currCol = $lastCol + $i
+        $absOff = $lineOffset + $currCol
+        $ch = $plain[$i]
+        $inSel = $state.SelActive -and $absOff -ge $selA -and $absOff -lt $selB
+        if ($inSel) {
+          [void]$sb.Append("$(T 'bgSelect')$(T 'fgNorm')$ch$bg")
+        } elseif ($rulerCol -ge 0 -and $currCol -eq $rulerCol) {
+          [void]$sb.Append("$(T 'fgRuler')│$(T 'fgNorm')")
+        } else {
+          [void]$sb.Append("$(T 'fgNorm')$ch")
+        }
+      }
+    }
+
+    $tEnd = $token.Start + $token.Length
+    $tLen = [Math]::Min($token.Length, $textWidth - $token.Start)
+    if ($tLen -gt 0) {
+      $tokText = $slice.Substring($token.Start, $tLen)
+      $colorKey = "fg$($token.Type)"
+
+      for ($i = 0; $i -lt $tokText.Length; $i++) {
+        $currCol = $token.Start + $i
+        $absOff = $lineOffset + $currCol
+        $ch = $tokText[$i]
+        $inSel = $state.SelActive -and $absOff -ge $selA -and $absOff -lt $selB
+        if ($inSel) {
+          [void]$sb.Append("$(T 'bgSelect')$(T $colorKey)$ch$bg")
+        } elseif ($rulerCol -ge 0 -and $currCol -eq $rulerCol) {
+          [void]$sb.Append("$(T 'fgRuler')│$(T $colorKey)")
+        } else {
+          [void]$sb.Append("$(T $colorKey)$ch")
+        }
+      }
+    }
+    $lastCol = $tEnd
+    if ($lastCol -ge $textWidth) { break }
+  }
+
+  if ($lastCol -lt $slice.Length -and $lastCol -lt $textWidth) {
+    $remLen = [Math]::Min($slice.Length - $lastCol, $textWidth - $lastCol)
+    $rest = $slice.Substring($lastCol, $remLen)
+    for ($i = 0; $i -lt $rest.Length; $i++) {
+      $currCol = $lastCol + $i
+      $absOff = $lineOffset + $currCol
+      $ch = $rest[$i]
+      $inSel = $state.SelActive -and $absOff -ge $selA -and $absOff -lt $selB
+      if ($inSel) {
+        [void]$sb.Append("$(T 'bgSelect')$(T 'fgNorm')$ch$bg")
+      } elseif ($rulerCol -ge 0 -and $currCol -eq $rulerCol) {
+        [void]$sb.Append("$(T 'fgRuler')│$(T 'fgNorm')")
+      } else {
+        [void]$sb.Append("$(T 'fgNorm')$ch")
+      }
+    }
+    $lastCol += $rest.Length
+  }
+
+  if ($lastCol -lt $textWidth) {
+    $padLen = $textWidth - $lastCol
+    for ($i = 0; $i -lt $padLen; $i++) {
+      $currCol = $lastCol + $i
+      $absOff = $lineOffset + $currCol
+      $inSel = $state.SelActive -and $absOff -ge $selA -and $absOff -lt $selB
+      if ($inSel) {
+        [void]$sb.Append("$(T 'bgSelect') $bg")
+      } elseif ($rulerCol -ge 0 -and $currCol -eq $rulerCol) {
+        [void]$sb.Append("$(T 'fgRuler')│$(T 'fgNorm')")
+      } else {
+        [void]$sb.Append(' ')
+      }
     }
   }
+
   [void]$sb.Append($RESET)
   $sb.ToString()
 }
+
 
 function Render-Frame {
   $width = [Console]::WindowWidth
