@@ -469,7 +469,14 @@ function Stdin-ReadKey {
       continue
     }
 
-    if ([int]$ki.KeyChar -eq 8) { return Make-KeyInfo ([char]8) ([System.ConsoleKey]::Backspace) 0 }
+    # Console.ReadKey returns byte 8 for both Backspace and Ctrl+H.
+    # If Key is Backspace, it's the physical key. Otherwise, treat as Ctrl+H.
+    if ([int]$ki.KeyChar -eq 8) {
+      if ($ki.Key -eq [System.ConsoleKey]::Backspace) {
+        return Make-KeyInfo ([char]8) ([System.ConsoleKey]::Backspace) 0
+      }
+      return Make-KeyInfo ([char]8) ([System.ConsoleKey]::H) ([System.ConsoleModifiers]::Control)
+    }
     return $ki
   }
 }
@@ -491,14 +498,19 @@ function Read-NextInputEvent {
           }
           $seq += [string]$nki.KeyChar
           $seqBufKeys.Add($nki)
+
           if ($seq -eq '[200~') { return [PSCustomObject]@{ Kind = 'Paste'; Text = Stdin-DrainPasteInteractive } }
+
           $mouseEvent = Try-ParseMouseSequence $seq
           if ($null -ne $mouseEvent) { return $mouseEvent }
+
           $parsed = Parse-EscapeSequence $seq
           if ($parsed.Key -ne [System.ConsoleKey]::NoName) {
             return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = $parsed }
           }
-          $couldContinue = '[200~'.StartsWith($seq) -or $seq -eq '[' -or $seq -eq '[<' -or $seq -match '^\[<[\d;]*[Mm]?$'
+
+          # Check if the current sequence can potentially become a valid BPM or mouse sequence.
+          $couldContinue = '[200~'.StartsWith($seq) -or $seq -eq '[' -or $seq -eq '[<' -or ($seq -match '^\[<[\d;]*$')
           if (-not $couldContinue) {
             foreach ($k in $seqBufKeys) { $script:inputPendingKeys.Enqueue($k) }
             break
@@ -1654,7 +1666,7 @@ function Edit-Babae {
       Render-Frame
 
       # Windows-only: poll for right-click paste via Win32 mouse events.
-      if ($script:mouseEnabled -and -not (Stdin-DataAvailable)) {
+      if ($script:mouseEnabled -and -not $script:diagPaneVisible -and -not (Stdin-DataAvailable)) {
         if ([BabaeWin]::PollRightClick($script:consoleHandle)) {
           Paste-Text (Get-ClipboardText)
           continue
