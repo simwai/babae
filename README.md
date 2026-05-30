@@ -25,6 +25,7 @@
 - [Themes](#themes)
 - [Language Detection](#language-detection)
 - [The Stairway Paste Fix](#the-stairway-paste-fix)
+- [Diagnostics](#diagnostics)
 - [Testing](#testing)
 
 <!-- tocstop -->
@@ -49,6 +50,8 @@ Its primary reason for existence: most terminal editors misbehave when pasting i
 - **`.editorconfig` Support**: Picks up `indent_style`, `indent_size`, `end_of_line`, `trim_trailing_whitespace`, `insert_final_newline`, and `charset` from the nearest `.editorconfig`.
 - **Mouse Right-Click Paste on Windows**: Win32 console API integration for native right-click paste events.
 - **Language Detection**: Automatic language label in the header based on file extension (see [Language Detection](#language-detection)).
+- **Live Diagnostics Pane**: Real-time operational log and error routing with `^D`.
+- **$O(\log n)$ Performance**: Optimized logical-line indexing for fast cursor movement in large files.
 - **Global Install**: On first run outside `~/.babae/`, babae offers to install itself globally and register a `babae` shell function in your PowerShell profile.
 
 ## Environment Setup Guide
@@ -106,10 +109,10 @@ pwsh ./babae.ps1 myfile.txt
 # Open with a specific theme
 pwsh ./babae.ps1 myfile.txt -Theme mocha
 
-# Open with the diagnostic pane enabled
+# Open with live diagnostics pane
 pwsh ./babae.ps1 -DiagPane
 
-# Enable file-based debug logging
+# Open with diagnostic logging to 'babae-debug.log'
 pwsh ./babae.ps1 -DebugLog
 ```
 
@@ -176,6 +179,15 @@ babae fixes this by enabling BPM (`ESC[?2004h`) on launch and running a **dual-p
 - **Redirected mode** (test harness / piped stdin): babae falls back to reading `Console.OpenStandardInput()` as a raw byte stream. BPM sentinels are detected at the byte level in `Stdin-DrainPaste`, making the test suite independent of any terminal or .NET console abstraction.
 
 In both paths, the paste payload never touches the `Enter` handler. No staircase.
+
+## Diagnostics
+
+babae includes a live diagnostic pane and file-based logging to aid in troubleshooting terminal and environment issues.
+
+- **Pane**: Toggle with `^D`. Displays the last 200 events (input sequences, IO errors, clipboard failures). The pane is resizable via mouse drag on the divider line.
+- **Log File**: Use the `-DebugLog` switch to mirror diagnostic events to `babae-debug.log` in the current directory.
+
+Failures that were previously silent (like clipboard access denied or Windows console mode errors) are now routed to this system for better observability.
 
 ## Testing
 

@@ -46,7 +46,9 @@ if (-not [Console]::IsInputRedirected -and -not $Env:BABAE_SKIP_INSTALL) {
           $shouldUpdate = $true
           $msg = " A different version of babae is installed globally. Update it? (y/n): "
         }
-      } catch {}
+      } catch {
+        Write-DiagLog \'INSTALL\' "Version comparison failed: $($_.Exception.Message)"
+      }
     }
 
     if ($shouldUpdate) {
@@ -61,6 +63,8 @@ if (-not [Console]::IsInputRedirected -and -not $Env:BABAE_SKIP_INSTALL) {
         if (-not (Test-Path $profileDir)) { New-Item -ItemType Directory -Path $profileDir -Force | Out-Null }
         if (-not (Test-Path $PROFILE)) { New-Item -ItemType File -Path $PROFILE -Force | Out-Null }
 
+        # LOW RISK -- interactive install flow intentionally trusts HOME/PROFILE.
+        # Keep this lightweight for real users and revisit only if CI/container installs become a target.
         $funcName = "babae"
         $funcDef = "`nfunction $funcName { pwsh -NoProfile -File `"$installPath`" @args }`n"
         $profileContent = Get-Content $PROFILE -Raw -ErrorAction SilentlyContinue
@@ -80,6 +84,7 @@ $ErrorActionPreference = "Stop"
 
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 [Console]::InputEncoding = [System.Text.Encoding]::UTF8
+
 $script:frameDelayMs = 33
 $script:undoStackMax = 200
 $script:undoStackTrim = 100
@@ -98,20 +103,180 @@ $script:diagScrollOffset = 0
 $script:diagDragging = $false
 $script:diagDividerRow = -1
 $script:diagRingBuffer = [System.Collections.Generic.Queue[string]]::new()
-
-
+$script:lineIndex = @(0)
 
 $script:debugLog = $null
+$script:debugLog = $null
 if ($DebugLog.IsPresent) {
+  # WARNING: File diagnostics are for troubleshooting and can contain operational context.
+  # Keep the richer live view in the pane and avoid logging raw user keystrokes.
   $script:debugLog = Join-Path . 'babae-debug.log'
 }
 Write-Host $script:debugLog
 
 # ---------------------------------------------------------------------------
+function Rebuild-LineIndex {
+  $text = $state.Buffer.ToString()
+  $starts = [System.Collections.Generic.List[int]]::new(); $starts.Add(0)
+  for ($i = 0; $i -lt $text.Length; $i++) { if ($text[$i] -eq "`n") { $starts.Add($i + 1) } }
+  $script:lineIndex = $starts.ToArray()
+}
 
-$script:debugLog = $null
-if ($DebugLog.IsPresent) {
-  $script:debugLog = Join-Path . 'babae-debug.log'
+function Find-LineRow([int]$offset) {
+  $idx = $script:lineIndex; if ($null -eq $idx -or $idx.Length -eq 0) { return 0 }
+  $lo = 0; $hi = $idx.Length - 1
+  while ($lo -le $hi) {
+    $mid = [int](($lo + $hi) / 2)
+    if ($idx[$mid] -le $offset) {
+      if ($mid -eq ($idx.Length - 1) -or $idx[$mid + 1] -gt $offset) { return $mid }
+      $lo = $mid + 1
+    } else { $hi = $mid - 1 }
+  }
+  return 0
+}
+
+function BufSet([string]$text) {
+  # BufSet is the sole buffer mutation chokepoint. Rebuilding the line-start cache here
+  # keeps the hot-path cursor helpers fast while making cache invalidation impossible to forget.
+  $state.Buffer.Clear() | Out-Null
+  if ($text) { $state.Buffer.Append($text) | Out-Null }
+  Rebuild-LineIndex
+}
+
+function BufText { $state.Buffer.ToString() }
+function BufLen { $state.Buffer.Length }
+
+function OffsetToRowCol([int]$offset) {
+  $off = [Math]::Max(0, [Math]::Min($offset, (BufLen)))
+  $row = Find-LineRow $off
+  return $row, ($off - $script:lineIndex[$row])
+}
+
+function LineStart([int]$offset) {
+  $off = [Math]::Max(0, [Math]::Min($offset, (BufLen)))
+  return $script:lineIndex[(Find-LineRow $off)]
+}
+
+function LineEnd([int]$offset) {
+  $off = [Math]::Max(0, [Math]::Min($offset, (BufLen)))
+  $row = Find-LineRow $off
+  if ($row -lt ($script:lineIndex.Length - 1)) { return ($script:lineIndex[$row + 1] - 1) }
+  return (BufLen)
+}
+
+function GetLine([int]$n) {
+  if ($n -lt 0 -or $n -ge $script:lineIndex.Length) { return $null }
+  $start = $script:lineIndex[$n]; $end = if ($n -lt ($script:lineIndex.Length - 1)) { $script:lineIndex[$n + 1] - 1 } else { BufLen }
+  return (BufText).Substring($start, $end - $start)
+}
+
+function RowColToOffset([int]$row, [int]$col) {
+  if ($script:lineIndex.Length -eq 0) { return 0 }
+  $row = [Math]::Max(0, [Math]::Min($row, $script:lineIndex.Length - 1))
+  $start = $script:lineIndex[$row]; $end = if ($row -lt ($script:lineIndex.Length - 1)) { $script:lineIndex[$row + 1] - 1 } else { (BufLen) }
+  return $start + [Math]::Max(0, [Math]::Min($col, $end - $start))
+}
+
+function LineCount { return [Math]::Max(1, $script:lineIndex.Length) }
+
+function State-Snapshot {
+  if ($state.UndoStack.Count -ge $script:undoStackMax) {
+    $arr = $state.UndoStack.ToArray(); $state.UndoStack.Clear()
+    # Stack.ToArray() returns newest-first. Re-pushing the kept tail in reverse preserves
+    # the original top-of-stack order while trimming only the oldest history entries.
+    for ($i = [Math]::Min($script:undoStackTrim, $arr.Count) - 1; $i -ge 0; $i--) { $state.UndoStack.Push($arr[$i]) }
+  }
+  $state.UndoStack.Push([PSCustomObject]@{ Buf = BufText; Cursor = $state.Cursor; PCol = $state.PreferredCol })
+  $state.RedoStack.Clear()
+}
+
+function Build-DiagRow([int]$rowIndex, [int]$screenWidth) {
+  if ($rowIndex -eq ($script:diagDividerRow - 1)) {
+    $plain = " DIAG | $($script:diagRingBuffer.Count) events | drag to resize | Ctrl+D hide "
+    $pad = [Math]::Max(0, $screenWidth - $plain.Length)
+    return "$(T 'bgBar')$(T 'fgAccent')${BOLD} DIAG $RESET$(T 'bgBar')$(T 'fgMuted')| $($script:diagRingBuffer.Count) events | drag to resize | Ctrl+D hide$(' ' * $pad)$RESET"
+  }
+  $entries = @($script:diagRingBuffer.ToArray())
+  $paneLine = $rowIndex - $script:diagDividerRow
+  $start = [Math]::Max(0, $entries.Count - $script:diagPaneHeight - $script:diagScrollOffset)
+  $idx = $start + $paneLine - 1; $text = if ($idx -ge 0 -and $idx -lt $entries.Count) { $entries[$idx] } else { '' }
+  if ($text.Length -gt $screenWidth) { $text = $text.Substring(0, $screenWidth) }
+  $pad = [Math]::Max(0, $screenWidth - $text.Length); return "$(T 'bg')$(T 'fgMuted')$text$(' ' * $pad)$RESET"
+}
+
+function Handle-DiagMouseDrag([int]$mouseRow) {
+  $height = [Console]::WindowHeight; $maxDiag = [Math]::Floor(($height - 4) / 2)
+  if ($maxDiag -le 0) { return }
+  $minDiag = [Math]::Min($script:diagPaneMinHeight, $maxDiag)
+  $newHeight = [Math]::Max($minDiag, [Math]::Min($height - $mouseRow - 1, $maxDiag))
+  if ($newHeight -ne $script:diagPaneHeight) { $script:diagPaneHeight = $newHeight; Reset-RenderShadow }
+}
+
+function Update-Scroll {
+  $diagRows = if ($script:diagPaneVisible) { $script:diagPaneHeight + 1 } else { 0 }
+  $height = [Math]::Max(1, [Console]::WindowHeight - 2 - $diagRows)
+  $curRow = (OffsetToRowCol $state.Cursor)[0]
+  if ($curRow -lt $state.ScrollRow) { $state.ScrollRow = $curRow }
+  elseif ($curRow -ge $state.ScrollRow + $height) { $state.ScrollRow = $curRow - $height + 1 }
+}
+
+function Render-Frame {
+  $width = [Console]::WindowWidth; $height = [Console]::WindowHeight; $textWidth = $width - 5
+  if ($script:diagPaneVisible) {
+    $maxDiag = [Math]::Floor(($height - 4) / 2)
+    if ($maxDiag -le 0) { $script:diagPaneVisible = $false; $script:diagDividerRow = -1 }
+    else {
+      $minDiag = [Math]::Min($script:diagPaneMinHeight, $maxDiag)
+      $script:diagPaneHeight = [Math]::Max($minDiag, [Math]::Min($script:diagPaneHeight, $maxDiag))
+      $script:diagDividerRow = $height - 1 - $script:diagPaneHeight
+    }
+  } else { $script:diagDividerRow = -1 }
+
+  if ($script:lastRows.Count -ne $height) {
+    $script:lastRows.Clear()
+    for ($idx = 0; $idx -lt $height; $idx++) { [void]$script:lastRows.Add('') }
+  }
+
+  $dirty = [System.Text.StringBuilder]::new()
+  for ($row = 0; $row -lt $height; $row++) {
+    if ($script:diagPaneVisible -and $row -ge ($script:diagDividerRow - 1) -and $row -lt ($height - 1)) {
+      $rendered = Build-DiagRow $row $width
+    } else {
+      $rendered = Build-EditorRow $row $width $textWidth
+    }
+    if ($script:lastRows[$row] -ne $rendered) {
+      $script:lastRows[$row] = $rendered
+      [void]$dirty.Append((Move-To ($row + 1) 1))
+      [void]$dirty.Append($rendered)
+    }
+  }
+  $curR, $curC = OffsetToRowCol $state.Cursor
+  $vRow = ($curR - $state.ScrollRow) + 1; $vCol = $curC + 6
+  $diagRows = if ($script:diagPaneVisible) { $script:diagPaneHeight + 1 } else { 0 }
+  if ($vRow -ge 1 -and $vRow -lt ($height - 1 - $diagRows)) {
+    [void]$dirty.Append((Move-To $vRow $vCol))
+    if (-not $script:lastCursorVisible) { [void]$dirty.Append("`e[?25h"); $script:lastCursorVisible = $true }
+  } else { if ($script:lastCursorVisible) { [void]$dirty.Append("`e[?25l"); $script:lastCursorVisible = $false } }
+  Out-Flush $dirty.ToString()
+}
+
+function Try-ParseMouseSequence([string]$seq) {
+  if ($seq -notmatch '^\[<(\d+);(\d+);(\d+)([Mm])$') { return $null }
+  $buttonCode = [int]$Matches[1]
+  $x = [int]$Matches[2]
+  $y = [int]$Matches[3]
+  $suffix = $Matches[4]
+  $release = ($suffix -eq 'm')
+  return [PSCustomObject]@{
+    Kind    = 'Mouse'
+    X       = $x
+    Y       = $y
+    Left    = (($buttonCode -band 3) -eq 0)
+    Right   = (($buttonCode -band 3) -eq 2)
+    Down    = (-not $release)
+    Release = $release
+    Drag    = (($buttonCode -band 32) -ne 0)
+  }
 }
 
 # Themes
@@ -374,212 +539,23 @@ function Parse-EscapeSequence([string]$seq) {
 
 # Read one complete input event from stdin.
 # Returns either a Key event or a Paste event.
-function Try-ParseMouseSequence([string]$seq) {
-  if ($seq -notmatch '^\[<(\d+);(\d+);(\d+)([Mm])$') { return $null }
-  $buttonCode = [int]$Matches[1]; $x = [int]$Matches[2]; $y = [int]$Matches[3]; $suffix = $Matches[4]
-  $release = ($suffix -eq 'm')
-  return [PSCustomObject]@{
-    Kind    = 'Mouse'; X = $x; Y = $y
-    Left    = (($buttonCode -band 3) -eq 0); Right = (($buttonCode -band 3) -eq 2)
-    Down    = (-not $release); Release = $release; Drag = (($buttonCode -band 32) -ne 0)
-  }
-}
-
 function Start-InputThread {
   if ([Console]::IsInputRedirected) { return }
-  $script:inputThread = [PowerShell]::Create().AddScript({
-    param($q)
-    try {
-      while ($true) {
-        if ([Console]::KeyAvailable) { $q.Enqueue([Console]::ReadKey($true)) | Out-Null }
-        else { [System.Threading.Thread]::Sleep(10) }
-      }
-    } catch { $q.Enqueue([PSCustomObject]@{ Kind = 'Diag'; Message = $_.Exception.Message }) | Out-Null }
-  }).AddArgument($script:inputQueue)
-  $script:inputHandle = $script:inputThread.BeginInvoke()
-}
-
-function Stop-InputThread {
-  if ($null -ne $script:inputThread) {
-    try { $script:inputThread.Stop() } catch {}
-    try { $script:inputThread.Dispose() } catch {}
-    $script:inputThread = $null
-  }
-}
-
-function Stdin-DrainPasteInteractive {
-  $sb = [System.Text.StringBuilder]::new(); $seq = ""
-  while ($true) {
-    $ki = $null; $waited = 0
-    while (-not $script:inputQueue.TryDequeue([ref]$ki) -and $waited -lt 500) { [System.Threading.Thread]::Sleep(5); $waited += 5 }
-    if ($null -eq $ki) { break }
-    $ch = $ki.KeyChar
-    if ($ki.Key -eq [System.ConsoleKey]::Escape) { $seq = "`e"; continue }
-    if ($seq -ne "") {
-      $seq += $ch
-      if ($seq -eq "`e[201~") { break }
-      if ("`e[201~".StartsWith($seq)) { continue }
-      [void]$sb.Append($seq); $seq = ""
-      continue
-    }
-    [void]$sb.Append($ch)
-  }
-  return $sb.ToString()
-}
-
-function Stdin-ReadKey {
-  if ([Console]::IsInputRedirected) {
-    $b = Stdin-ReadByte; if ($b -eq -1) { return $null }
-    return [System.ConsoleKeyInfo]::new([char]$b, 0, $false, $false, $false)
-  }
-  if ($script:inputPendingKeys.Count -gt 0) { return $script:inputPendingKeys.Dequeue() }
-  while ($true) {
-    $ki = $null
-    while (-not $script:inputQueue.TryDequeue([ref]$ki)) {
-      if (-not $script:running) { return $null }
-      [System.Threading.Thread]::Sleep(10)
-    }
-    if ($ki -is [pscustomobject] -and $ki.Kind -eq 'Diag') { Write-DiagLog 'INPUT' $ki.Message; continue }
-    if ([int]$ki.KeyChar -eq 8) {
-      if ($ki.Key -eq [System.ConsoleKey]::Backspace) { return Make-KeyInfo ([char]8) ([System.ConsoleKey]::Backspace) 0 }
-      return Make-KeyInfo ([char]8) ([System.ConsoleKey]::H) ([System.ConsoleModifiers]::Control)
-    }
-    return $ki
-  }
-}
-
-function Read-NextInputEvent {
-  if (-not [Console]::IsInputRedirected) {
-    $ki = Stdin-ReadKey; if ($null -eq $ki) { return $null }
-    if ($ki.Key -eq [System.ConsoleKey]::Escape) {
-      $seq = ""; $seqBufKeys = [System.Collections.Generic.List[object]]::new(); $waited = 0
-      while ($seq.Length -lt $script:maxSeqLen -and $waited -lt $script:escapeTimeoutMs) {
-        $nki = $null
-        if ($script:inputQueue.TryDequeue([ref]$nki)) {
-          if ($nki -is [pscustomobject] -and $nki.Kind -eq 'Diag') { continue }
-          $seq += [string]$nki.KeyChar; $seqBufKeys.Add($nki) | Out-Null
-          if ($seq -eq '[200~') { return [PSCustomObject]@{ Kind = 'Paste'; Text = Stdin-DrainPasteInteractive } }
-          $mouseEvent = Try-ParseMouseSequence $seq; if ($null -ne $mouseEvent) { return $mouseEvent }
-          $parsed = Parse-EscapeSequence $seq; if ($parsed.Key -ne [System.ConsoleKey]::NoName) { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = $parsed } }
-          if (-not ('[200~'.StartsWith($seq) -or '['.StartsWith($seq) -or '[<'.StartsWith($seq) -or ($seq -match '^\[<[\d;]*$'))) {
-            foreach ($k in $seqBufKeys) { $script:inputPendingKeys.Enqueue($k) | Out-Null }; break
-          }
-        } else { [System.Threading.Thread]::Sleep(5); $waited += 5 }
-      }
-      return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Make-KeyInfo ([char]27) ([System.ConsoleKey]::Escape) 0) }
-    }
-    return [PSCustomObject]@{ Kind = "Key"; KeyInfo = $ki }
-  }
-  $b = Stdin-ReadByte; if ($b -eq -1) { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]17) ([System.ConsoleKey]::Q) ([System.ConsoleModifiers]::Control)) } }
-  if ($b -eq 27) {
-    Stdin-PeekAvailable
-    if ($script:inputPending.Count -eq 0) {
-      $w = 0; while ($script:inputPending.Count -eq 0 -and $w -lt 50) { Start-Sleep -Milliseconds 5; $w += 5; Stdin-PeekAvailable }
-    }
-    if ($script:inputPending.Count -eq 0) { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Make-KeyInfo ([char]27) ([System.ConsoleKey]::Escape) 0) } }
-    $seqBuf = [System.Text.StringBuilder]::new(); [void]$seqBuf.Append([char]27)
-    while ($script:inputPending.Count -gt 0 -and $seqBuf.Length -lt $script:maxSeqLen) {
-      $nb = Stdin-ReadByte; if ($nb -eq -1) { break }; $nc = [char]$nb; [void]$seqBuf.Append($nc)
-      $seq = $seqBuf.ToString().Substring(1)
-      if ($seq -eq '[200~') { return [PSCustomObject]@{ Kind = 'Paste'; Text = Stdin-DrainPaste } }
-      $mouseEvent = Try-ParseMouseSequence $seq; if ($null -ne $mouseEvent) { return $mouseEvent }
-      $ki = Parse-EscapeSequence $seq; if ($ki.Key -ne [System.ConsoleKey]::NoName) { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = $ki } }
-      $couldContinue = ($seq.Length -eq 1 -and ($seq -eq '[' -or $seq -eq 'O')) -or '[200~'.StartsWith($seq) -or $seq -eq '[<' -or $seq -match '^\[<[\d;]*[Mm]?$' -or ($seq.Length -gt 1 -and $seq[0] -eq '[' -and ($nc -match '[0-9;]'))
-      if (-not $couldContinue) { break }
-    }
-    return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Make-KeyInfo ([char]27) ([System.ConsoleKey]::Escape) 0) }
-  }
-  $ch = [char]$b; $ck = try { [System.ConsoleKey]$ch.ToString().ToUpper() } catch { [System.ConsoleKey]::NoName }
-  return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo $ch $ck 0) }
-}
-function Make-KeyInfo([char]$ch, [System.ConsoleKey]$key, [System.ConsoleModifiers]$mods) {
-  return [System.ConsoleKeyInfo]::new($ch, $key, `
-    ($mods -band [System.ConsoleModifiers]::Shift) -ne 0, `
-    ($mods -band [System.ConsoleModifiers]::Alt)   -ne 0, `
-    ($mods -band [System.ConsoleModifiers]::Control) -ne 0)
-}
-
-# Parse a VT escape sequence (everything after the leading ESC) into a
-# ConsoleKeyInfo.  $seq is the chars after ESC, e.g. '[A' for up-arrow.
-function Parse-EscapeSequence([string]$seq) {
-  # CSI sequences: ESC [ ...
-  if ($seq.StartsWith('[')) {
-    $param = $seq.Substring(1)
-    switch ($param) {
-      'A'  { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::UpArrow)    0 }
-      'B'  { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::DownArrow)  0 }
-      'C'  { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::RightArrow) 0 }
-      'D'  { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::LeftArrow)  0 }
-      'H'  { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::Home)       0 }
-      'F'  { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::End)        0 }
-      '1~' { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::Home)       0 }
-      '4~' { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::End)        0 }
-      '5~' { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::PageUp)     0 }
-      '6~' { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::PageDown)   0 }
-      '2~' { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::Insert)     0 }
-      '3~' { return Make-KeyInfo ([char]0)  ([System.ConsoleKey]::Delete)     0 }
-      # Shift+arrows (xterm)
-      '1;2A' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::UpArrow)    ([System.ConsoleModifiers]::Shift) }
-      '1;2B' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::DownArrow)  ([System.ConsoleModifiers]::Shift) }
-      '1;2C' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::RightArrow) ([System.ConsoleModifiers]::Shift) }
-      '1;2D' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::LeftArrow)  ([System.ConsoleModifiers]::Shift) }
-
-      # Ctrl+1..9 (CSI u and common xterm variations)
-      '49;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D1) ([System.ConsoleModifiers]::Control) }
-      '50;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D2) ([System.ConsoleModifiers]::Control) }
-      '51;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D3) ([System.ConsoleModifiers]::Control) }
-      '52;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D4) ([System.ConsoleModifiers]::Control) }
-      '53;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D5) ([System.ConsoleModifiers]::Control) }
-      '54;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D6) ([System.ConsoleModifiers]::Control) }
-      '55;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D7) ([System.ConsoleModifiers]::Control) }
-      '56;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D8) ([System.ConsoleModifiers]::Control) }
-      '57;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D9) ([System.ConsoleModifiers]::Control) }
-      '48;5u'     { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D0) ([System.ConsoleModifiers]::Control) }
-
-      # Alternative xterm sequences for Ctrl+Digit
-      '27;5;49~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D1) ([System.ConsoleModifiers]::Control) }
-      '27;5;50~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D2) ([System.ConsoleModifiers]::Control) }
-      '27;5;51~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D3) ([System.ConsoleModifiers]::Control) }
-      '27;5;52~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D4) ([System.ConsoleModifiers]::Control) }
-      '27;5;53~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D5) ([System.ConsoleModifiers]::Control) }
-      '27;5;54~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D6) ([System.ConsoleModifiers]::Control) }
-      '27;5;55~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D7) ([System.ConsoleModifiers]::Control) }
-      '27;5;56~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D8) ([System.ConsoleModifiers]::Control) }
-      '27;5;57~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D9) ([System.ConsoleModifiers]::Control) }
-      '27;5;48~'  { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::D0) ([System.ConsoleModifiers]::Control) }
-    }
-  }
-  # SS3 sequences: ESC O ...
-  if ($seq.StartsWith('O')) {
-    switch ($seq.Substring(1)) {
-      'A' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::UpArrow)    0 }
-      'B' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::DownArrow)  0 }
-      'C' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::RightArrow) 0 }
-      'D' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::LeftArrow)  0 }
-      'H' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::Home)       0 }
-      'F' { return Make-KeyInfo ([char]0) ([System.ConsoleKey]::End)        0 }
-    }
-  }
-  # Unknown sequence — return a null-char key so it is silently ignored.
-  return Make-KeyInfo ([char]0) ([System.ConsoleKey]::NoName) 0
-}
-
-# Read one complete input event from stdin.
-# Returns either a Key event or a Paste event.
-function Start-InputThread {
-  if ([Console]::IsInputRedirected) { return }
+  $script:inputQueue = [System.Collections.Concurrent.ConcurrentQueue[object]]::new()
   $script:inputThread = [PowerShell]::Create().AddScript({
     param($q)
     try {
       while ($true) {
         if ([Console]::KeyAvailable) {
           $ki = [Console]::ReadKey($true)
-          $q.Enqueue($ki)
+          $q.Enqueue($ki) | Out-Null
         } else {
           [System.Threading.Thread]::Sleep(10)
         }
       }
-    } catch {}
+    } catch {
+      $q.Enqueue([PSCustomObject]@{ Kind = 'Diag'; Message = $_.Exception.Message }) | Out-Null
+    }
   }).AddArgument($script:inputQueue)
   $script:inputHandle = $script:inputThread.BeginInvoke()
 }
@@ -626,17 +602,22 @@ function Stdin-ReadKey {
     return [System.ConsoleKeyInfo]::new([char]$b, 0, $false, $false, $false)
   }
   if ($script:inputPendingKeys.Count -gt 0) { return $script:inputPendingKeys.Dequeue() }
-  $ki = $null
-  while (-not $script:inputQueue.TryDequeue([ref]$ki)) {
-    if (-not $script:running) { return $null }
-    [System.Threading.Thread]::Sleep(10)
+  while ($true) {
+    $ki = $null
+    while (-not $script:inputQueue.TryDequeue([ref]$ki)) {
+      if (-not $script:running) { return $null }
+      [System.Threading.Thread]::Sleep(10)
+    }
+    if ($ki -is [pscustomobject] -and $ki.Kind -eq 'Diag') {
+      Write-DiagLog 'INPUT' "Input thread failed: $($ki.Message)"
+      continue
+    }
+    if ([int]$ki.KeyChar -eq 8) {
+      if ($ki.Key -eq [System.ConsoleKey]::Backspace) { return Make-KeyInfo ([char]8) ([System.ConsoleKey]::Backspace) 0 }
+      return Make-KeyInfo ([char]8) ([System.ConsoleKey]::H) ([System.ConsoleModifiers]::Control)
+    }
+    return $ki
   }
-  # Console.ReadKey maps Ctrl+H (byte 8) to Key=Backspace — remap it so
-  # Handle-EditKey sees Key=H with Control modifier, matching the raw-path behaviour.
-  if ([int]$ki.KeyChar -eq 8) {
-    return Make-KeyInfo ([char]8) ([System.ConsoleKey]::H) ([System.ConsoleModifiers]::Control)
-  }
-  return $ki
 }
 
 function Read-NextInputEvent {
@@ -644,136 +625,65 @@ function Read-NextInputEvent {
     $ki = Stdin-ReadKey
     if ($null -eq $ki) { return $null }
     if ($ki.Key -eq [System.ConsoleKey]::Escape) {
-      $seq = "`e"
+      $seq = ""
       $seqBufKeys = [System.Collections.Generic.List[object]]::new()
       $waited = 0
-      while ($seq.Length -lt 6 -and $waited -lt 100) {
+      while ($seq.Length -lt $script:maxSeqLen -and $waited -lt $script:escapeTimeoutMs) {
         $nki = $null
         if ($script:inputQueue.TryDequeue([ref]$nki)) {
-          $seq += $nki.KeyChar
-          $seqBufKeys.Add($nki)
-          if ($seq -eq "`e[200~") { return [PSCustomObject]@{ Kind = "Paste"; Text = Stdin-DrainPasteInteractive } }
-          if (-not "`e[200~".StartsWith($seq)) {
-            foreach ($k in $seqBufKeys) { $script:inputPendingKeys.Enqueue($k) }
+          if ($nki -is [pscustomobject]) { continue }
+          $seq += [string]$nki.KeyChar
+          [void]$seqBufKeys.Add($nki)
+          if ($seq -eq '[200~') { return [PSCustomObject]@{ Kind = 'Paste'; Text = Stdin-DrainPasteInteractive } }
+          $mouseEvent = Try-ParseMouseSequence $seq
+          if ($null -ne $mouseEvent) { return $mouseEvent }
+          $parsed = Parse-EscapeSequence $seq
+          if ($parsed.Key -ne [System.ConsoleKey]::NoName) { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = $parsed } }
+          $couldContinue = '[200~'.StartsWith($seq) -or '['.StartsWith($seq) -or '[<'.StartsWith($seq) -or ($seq -match '^\[<[\d;]*$')
+          if (-not $couldContinue) {
+            foreach ($k in $seqBufKeys) { [void]$script:inputPendingKeys.Enqueue($k) }
             break
           }
         } else {
           [System.Threading.Thread]::Sleep(5); $waited += 5
         }
       }
+      return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Make-KeyInfo ([char]27) ([System.ConsoleKey]::Escape) 0) }
     }
     return [PSCustomObject]@{ Kind = "Key"; KeyInfo = $ki }
   }
+  # REDIRECTED PATH (Tests)
   $b = Stdin-ReadByte
-  if ($b -eq -1) {
-    # EOF — stdin closed (test harness finished sending, or pipe broken).
-    # Return a synthetic Ctrl+Q so the editor exits cleanly.
-    return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]17) ([System.ConsoleKey]::Q) ([System.ConsoleModifiers]::Control)) }
-  }
-
-  # ── Bracketed-paste start: ESC [ 2 0 0 ~ ───────────────────────────────
-  # We detect it at the byte level by reading ahead after an ESC.
+  if ($b -eq -1) { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]17) ([System.ConsoleKey]::Q) ([System.ConsoleModifiers]::Control)) } }
   if ($b -eq 27) {
-    # Wait briefly for the bytes that follow ESC to arrive.
-    # On a real tty they are all in the kernel buffer already.
-    # On a redirected pipe they may arrive in a separate read() call.
     Stdin-PeekAvailable
     if ($script:inputPending.Count -eq 0) {
-      # Nothing arrived yet — wait up to 50 ms for an escape sequence.
-      $w = 0
-      while ($script:inputPending.Count -eq 0 -and $w -lt 50) {
-        Start-Sleep -Milliseconds 5; $w += 5
-        Stdin-PeekAvailable
-      }
+      $w = 0; while ($script:inputPending.Count -eq 0 -and $w -lt 50) { Start-Sleep -Milliseconds 5; $w += 5; Stdin-PeekAvailable }
     }
-    if ($script:inputPending.Count -eq 0) {
-      # Still nothing after waiting → bare ESC keypress.
-      return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Make-KeyInfo ([char]27) ([System.ConsoleKey]::Escape) 0) }
-    }
-
-    # Accumulate the rest of the sequence until it either matches a known
-    # pattern or contains a char that can't continue any sequence.
-    $seqBuf = [System.Text.StringBuilder]::new()
-    $maxSeqLen = 12  # longest sequence we care about is '1;2D' = 4 chars after '['
-
-    while ($script:inputPending.Count -gt 0 -and $seqBuf.Length -lt $maxSeqLen) {
-      $nb = $script:inputPending.Peek()
-      $nc = [char]$nb
-      # Stop if this byte starts a new, unrelated sequence or is printable.
-      if ($nb -eq 27) { break }  # another ESC — stop here
-      [void]$seqBuf.Append($nc)
-      $script:inputPending.Dequeue() | Out-Null
-
-      $seq = $seqBuf.ToString()
-
-      # Bracketed paste start ─────────────────────────────────────────────
-      if ($seq -eq '[200~') {
-        $payload = Stdin-DrainPaste
-        return [PSCustomObject]@{ Kind = 'Paste'; Text = $payload }
-      }
-
-      # Known terminal sequence — stop as soon as it matches ──────────────
+    if ($script:inputPending.Count -eq 0) { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Make-KeyInfo ([char]27) ([System.ConsoleKey]::Escape) 0) } }
+    $seqBuf = [System.Text.StringBuilder]::new(); [void]$seqBuf.Append([char]27)
+    while ($script:inputPending.Count -gt 0 -and $seqBuf.Length -lt $script:maxSeqLen) {
+      $nb = Stdin-ReadByte; if ($nb -eq -1) { break }
+      $nc = [char]$nb; [void]$seqBuf.Append($nc); $seq = $seqBuf.ToString().Substring(1)
+      if ($seq -eq '[200~') { return [PSCustomObject]@{ Kind = 'Paste'; Text = Stdin-DrainPaste } }
+      $mouseEvent = Try-ParseMouseSequence $seq
+      if ($null -ne $mouseEvent) { return $mouseEvent }
       $ki = Parse-EscapeSequence $seq
-      if ($ki.Key -ne [System.ConsoleKey]::NoName) {
-        return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = $ki }
-      }
-
-      # Keep accumulating if we might still complete a valid sequence.
-      # A sequence is "potentially continuable" when it starts with [ or O
-      # and consists only of digits, semicolons, or letters we handle.
-      $couldContinue = ($seq.Length -eq 1 -and ($seq -eq '[' -or $seq -eq 'O')) `
-                    -or ($seq.Length -gt 1 -and $seq[0] -eq '[' -and ($nc -match '[0-9;]'))
+      if ($ki.Key -ne [System.ConsoleKey]::NoName) { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = $ki } }
+      $couldContinue = ($seq.Length -eq 1 -and ($seq -eq '[' -or $seq -eq 'O')) -or '[200~'.StartsWith($seq) -or $seq -eq '[<' -or $seq -match '^\[<[\d;]*[Mm]?$' -or ($seq.Length -gt 1 -and $seq[0] -eq '[' -and ($nc -match '[0-9;]'))
       if (-not $couldContinue) { break }
     }
-
-    # Sequence ended without a match — emit ESC + accumulated chars as
-    # individual key events.  Push them back onto the front of the queue.
-    $seqStr = $seqBuf.ToString()
-    # Push the accumulated chars back (in reverse, since Queue.Enqueue goes to back).
-    # Simplest: re-queue the raw bytes, then immediately return the bare ESC.
-    $rawBytes = [System.Text.Encoding]::UTF8.GetBytes($seqStr)
-    # Prepend them to the pending queue by rebuilding it.
-    $tmp = [System.Collections.Generic.Queue[byte]]::new()
-    foreach ($rb in $rawBytes) { $tmp.Enqueue($rb) }
-    foreach ($rb in $script:inputPending) { $tmp.Enqueue($rb) }
-    $script:inputPending = $tmp
     return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Make-KeyInfo ([char]27) ([System.ConsoleKey]::Escape) 0) }
   }
-
-  # ── Control bytes ────────────────────────────────────────────────────────
-  switch ($b) {
-    0   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]0)  ([System.ConsoleKey]::D2)        ([System.ConsoleModifiers]::Control)) } }
-    13  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]13)  ([System.ConsoleKey]::Enter)     0) } }
-    127 { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
-    # Ctrl+H (byte 8) → open Help. Backspace uses byte 127 (DEL) on xterm/Bitvise.
-    8   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]8) ([System.ConsoleKey]::H) ([System.ConsoleModifiers]::Control)) } }
-    9   { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]9)   ([System.ConsoleKey]::Tab)       0) } }
-    27  {}  # handled above
-    28  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]28) ([System.ConsoleKey]::D4)        ([System.ConsoleModifiers]::Control)) } }
-    29  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]29) ([System.ConsoleKey]::D5)        ([System.ConsoleModifiers]::Control)) } }
-    30  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]30) ([System.ConsoleKey]::D6)        ([System.ConsoleModifiers]::Control)) } }
-    31  { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]31) ([System.ConsoleKey]::D7) ([System.ConsoleModifiers]::Control)) } }
-    # Ctrl+A..Z
-    default {
-      if ($b -ge 1 -and $b -le 26) {
-        $letter = [char]($b + [int][char]'A' - 1)
-        $ck     = [System.ConsoleKey]$letter.ToString()
-        return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]$b) $ck ([System.ConsoleModifiers]::Control)) }
-      }
-    }
+  # Standard byte
+  if ($b -eq 10 -or $b -eq 13) { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]$b) ([System.ConsoleKey]::Enter) 0) } }
+  if ($b -eq 127) { return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
+  if ($b -lt 32) {
+    $ch = [char]($b + 64)
+    $ck = try { [System.ConsoleKey]$ch.ToString().ToUpper() } catch { [System.ConsoleKey]::NoName }
+    return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo ([char]$b) $ck ([System.ConsoleModifiers]::Control)) }
   }
-
-  # ── Printable UTF-8 character ────────────────────────────────────────────
-  # Decode multi-byte sequences.
-  [byte[]]$charBytes = @($b)
-  if ($b -ge 0xC0) {
-    $extra = if ($b -ge 0xF0) { 3 } elseif ($b -ge 0xE0) { 2 } else { 1 }
-    for ($i = 0; $i -lt $extra; $i++) { $charBytes += Stdin-ReadByte }
-  }
-  $ch = [System.Text.Encoding]::UTF8.GetString($charBytes)[0]
-
-  # Map printable to a ConsoleKey — best-effort, editor only uses KeyChar.
-  $ck = try { [System.ConsoleKey]$ch.ToString().ToUpper() } catch { [System.ConsoleKey]::NoName }
+  $ch = [char]$b; $ck = try { [System.ConsoleKey]$ch.ToString().ToUpper() } catch { [System.ConsoleKey]::NoName }
   return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo $ch $ck 0) }
 }
 $script:lastRows = [System.Collections.Generic.List[string]]::new()
@@ -796,26 +706,20 @@ function Reset-RenderShadow {
 # ---------------------------------------------------------------------------
 # Debug logging
 # ---------------------------------------------------------------------------
-
 function Write-DiagLog([string]$category, [string]$message) {
-  if ($null -eq $script:diagRingBuffer) {
-    $script:diagRingBuffer = [System.Collections.Generic.Queue[string]]::new()
-  }
+  if ($null -eq $script:diagRingBuffer) { $script:diagRingBuffer = [System.Collections.Generic.Queue[string]]::new() }
   $line = "[{0}] [{1}] {2}" -f ([DateTimeOffset]::UtcNow.ToString('HH:mm:ss.fff')), $category.ToUpperInvariant(), $message
   $script:diagRingBuffer.Enqueue($line) | Out-Null
   while ($script:diagRingBuffer.Count -gt $script:diagLogMaxEntries) { [void]$script:diagRingBuffer.Dequeue() }
   if ($script:debugLog) {
-    try {
-      Add-Content -LiteralPath $script:debugLog -Value $line -Encoding UTF8
-    } catch {}
+    try { Add-Content -LiteralPath $script:debugLog -Value $line -Encoding UTF8 } catch { }
   }
 }
 
 function Write-DebugLog([string]$message) {
-
   if ($null -eq $script:debugLog) { return }
   $ts = [DateTimeOffset]::UtcNow.ToString('HH:mm:ss.fff')
-  Add-Content -LiteralPath $script:debugLog -Value "[$ts] $message" -Encoding UTF8
+  try { Add-Content -LiteralPath $script:debugLog -Value "[$ts] $message" -Encoding UTF8 } catch {}
 }
 
 # ---------------------------------------------------------------------------
@@ -834,6 +738,7 @@ $script:ec = @{
 # Single source of truth for all keybindings — consumed by status bar + help dialog
 $script:commands = @(
   [PSCustomObject]@{ Key = '^T'; Label = 'Theme' }
+  [PSCustomObject]@{ Key = '^D'; Label = 'Diag' }
   [PSCustomObject]@{ Key = '^S'; Label = 'Save' }
   [PSCustomObject]@{ Key = '^Q'; Label = 'Quit' }
   [PSCustomObject]@{ Key = '^F'; Label = 'Find' }
@@ -1083,89 +988,29 @@ $state = [PSCustomObject]@{
 # ── flat-buffer primitives ───────────────────────────────────────────────────
 
 
-$script:lineIndex = @(0)
 
-function Rebuild-LineIndex {
-  $text = $state.Buffer.ToString()
-  $starts = [System.Collections.Generic.List[int]]::new()
-  $starts.Add(0)
-  for ($i = 0; $i -lt $text.Length; $i++) {
-    if ($text[$i] -eq "`n") { $starts.Add($i + 1) }
-  }
-  $script:lineIndex = $starts.ToArray()
-}
 
-function Find-LineRow([int]$offset) {
-  $idx = $script:lineIndex
-  if ($null -eq $idx -or $idx.Length -eq 0) { return 0 }
-  $lo = 0; $hi = $idx.Length - 1
-  while ($lo -le $hi) {
-    $mid = [int](($lo + $hi) / 2)
-    if ($idx[$mid] -le $offset) {
-      if ($mid -eq ($idx.Length - 1) -or $idx[$mid + 1] -gt $offset) { return $mid }
-      $lo = $mid + 1
-    } else { $hi = $mid - 1 }
-  }
-  return 0
-}
-
-function BufSet([string]$text) {
-  $state.Buffer.Clear() | Out-Null
-  if ($text) { $state.Buffer.Append($text) | Out-Null }
-  Rebuild-LineIndex
-}
-
-function BufText { $state.Buffer.ToString() }
-
-function BufLen { return $state.Buffer.Length }
-function BufSet([string]$text) {
-  $state.Buffer.Clear() | Out-Null
-  if ($text) { $state.Buffer.Append($text) | Out-Null }
-}
 function ClampCursor {
   $state.Cursor = [Math]::Max(0, [Math]::Min($state.Cursor, (BufLen)))
 }
 
 # 0-based [row, col] for a buffer offset
-function OffsetToRowCol([int]$offset) {
-  $off = [Math]::Max(0, [Math]::Min($offset, (BufLen)))
-  $row = Find-LineRow $off
-  return $row, ($off - $script:lineIndex[$row])
-}
+
 
 # Offset of first char of the line containing $offset
-function LineStart([int]$offset) {
-  $off = [Math]::Max(0, [Math]::Min($offset, (BufLen)))
-  return $script:lineIndex[(Find-LineRow $off)]
-}
+
 
 # Offset just past the last char of the line (before \n or at end-of-buffer)
-function LineEnd([int]$offset) {
-  $off = [Math]::Max(0, [Math]::Min($offset, (BufLen)))
-  $row = Find-LineRow $off
-  if ($row -lt ($script:lineIndex.Length - 1)) { return ($script:lineIndex[$row + 1] - 1) }
-  return (BufLen)
-}
+
 
 # Text of logical line $n (0-based); $null when out of range
-function GetLine([int]$n) {
-  if ($n -lt 0 -or $n -ge $script:lineIndex.Length) { return $null }
-  $start = $script:lineIndex[$n]
-  $end = if ($n -lt ($script:lineIndex.Length - 1)) { $script:lineIndex[$n + 1] - 1 } else { (BufLen) }
-  return (BufText).Substring($start, $end - $start)
-}
+
 
 # Buffer offset for [row, col] — col is clamped to line length
-function RowColToOffset([int]$row, [int]$col) {
-  if ($script:lineIndex.Length -eq 0) { return 0 }
-  $row = [Math]::Max(0, [Math]::Min($row, $script:lineIndex.Length - 1))
-  $start = $script:lineIndex[$row]
-  $end = if ($row -lt ($script:lineIndex.Length - 1)) { $script:lineIndex[$row + 1] - 1 } else { (BufLen) }
-  return $start + [Math]::Max(0, [Math]::Min($col, $end - $start))
-}
+
 
 # Total number of logical lines
-function LineCount { return [Math]::Max(1, $script:lineIndex.Length) }
+
 
 # Ordered [lo, hi] selection offsets
 function SelBounds {
@@ -1213,19 +1058,7 @@ function State-SaveFile {
   $state.Dirty = $false; $state.Message = ' Saved '
 }
 
-function State-Snapshot {
-  if ($state.UndoStack.Count -ge 200) {
-    $arr = $state.UndoStack.ToArray(); $state.UndoStack.Clear()
-    # Keep newest 100, discard oldest 100 — amortized O(1) trim
-    for ($i = 0; $i -lt ($arr.Count - 100); $i++) {
-      $state.UndoStack.Push($arr[$arr.Count - 1 - $i])
-    }
-  }
-  $state.UndoStack.Push([PSCustomObject]@{
-      Buf = BufText; Cursor = $state.Cursor; PCol = $state.PreferredCol
-    })
-  $state.RedoStack.Clear()
-}
+
 
 function State-Apply([object]$snap, [System.Collections.Generic.Stack[object]]$target) {
   $target.Push([PSCustomObject]@{
@@ -1281,12 +1114,7 @@ function Paste-Text([string]$text) {
 
 function Clamp-Cursor { ClampCursor }
 
-function Update-Scroll {
-  $height = [Console]::WindowHeight - 2
-  $curRow = (OffsetToRowCol $state.Cursor)[0]
-  if ($curRow -lt $state.ScrollRow) { $state.ScrollRow = $curRow }
-  elseif ($curRow -ge $state.ScrollRow + $height) { $state.ScrollRow = $curRow - $height + 1 }
-}
+
 
 function Move-To([int]$r, [int]$c) { "`e[$r;${c}H" }
 
@@ -1364,6 +1192,9 @@ function Build-EditorRow([int]$rowIndex, [int]$screenWidth, [int]$textWidth) {
 
   $sb = [System.Text.StringBuilder]::new()
   [void]$sb.Append($gutter); [void]$sb.Append($bg)
+  # The mixed ruler/selection path rebuilds one visible cell at a time so the visual layers
+  # never drift out of sync. Substring slicing is cheaper, but it cannot safely compose
+  # selection background, ruler glyph, and current-line background in the same column.
   for ($ci = 0; $ci -lt $textWidth; $ci++) {
     $absOff = $lineOffset + $ci
     $ch = if ($ci -lt $slice.Length) { [string]$slice[$ci] } else { ' ' }
@@ -1381,71 +1212,6 @@ function Build-EditorRow([int]$rowIndex, [int]$screenWidth, [int]$textWidth) {
 }
 
 
-function Build-DiagRow([int]$rowIndex, [int]$screenWidth) {
-  if ($rowIndex -eq ($script:diagDividerRow - 1)) {
-    $plain = " DIAG | $($script:diagRingBuffer.Count) events | drag to resize | Ctrl+D hide "
-    $pad = [Math]::Max(0, $screenWidth - $plain.Length)
-    return "$(T 'bgBar')$(T 'fgAccent')${BOLD} DIAG $RESET$(T 'bgBar')$(T 'fgMuted')| $($script:diagRingBuffer.Count) events | drag to resize | Ctrl+D hide$(' ' * $pad)$RESET"
-  }
-  $entries = @($script:diagRingBuffer.ToArray())
-  $paneLine = $rowIndex - $script:diagDividerRow
-  $start = [Math]::Max(0, $entries.Count - $script:diagPaneHeight - $script:diagScrollOffset)
-  $idx = $start + $paneLine - 1
-  $text = if ($idx -ge 0 -and $idx -lt $entries.Count) { $entries[$idx] } else { '' }
-  if ($text.Length -gt $screenWidth) { $text = $text.Substring(0, $screenWidth) }
-  $pad = [Math]::Max(0, $screenWidth - $text.Length)
-  return "$(T 'bg')$(T 'fgMuted')$text$(' ' * $pad)$RESET"
-}
-
-function Handle-DiagMouseDrag([int]$mouseRow) {
-  $height = [Console]::WindowHeight; $maxDiag = [Math]::Floor(($height - 4) / 2)
-  if ($maxDiag -le 0) { return }
-  $minDiag = [Math]::Min($script:diagPaneMinHeight, $maxDiag)
-  $newHeight = [Math]::Max($minDiag, [Math]::Min($height - $mouseRow - 1, $maxDiag))
-  if ($newHeight -ne $script:diagPaneHeight) { $script:diagPaneHeight = $newHeight; Reset-RenderShadow }
-}
-
-function Render-Frame {
-  $width = [Console]::WindowWidth
-  $height = [Console]::WindowHeight
-  $textWidth = $width - 5
-
-  if ($script:lastRows.Count -ne $height) {
-    Reset-RenderShadow
-    for ($i = 0; $i -lt $height; $i++) { $script:lastRows.Add('') }
-    Out-Flush("`e[2J`e[?25l")
-    $script:lastCursorVisible = $false
-  }
-
-  $dirty = [System.Text.StringBuilder]::new()
-  if (-not $script:lastCursorVisible) {
-    [void]$dirty.Append("`e[?25l")
-    $script:lastCursorVisible = $true
-  }
-
-  for ($row = 0; $row -lt $height; $row++) {
-    $rendered = Build-EditorRow $row $width $textWidth
-    if ($script:lastRows[$row] -ne $rendered) {
-      $script:lastRows[$row] = $rendered
-      [void]$dirty.Append((Move-To ($row + 1) 1))
-      [void]$dirty.Append($rendered)
-    }
-  }
-
-  # Cursor screen position derived from buffer offset
-  $cr, $cc = OffsetToRowCol $state.Cursor
-  $screenRow = $cr - $state.ScrollRow + 2
-  $screenCol = $cc + 6
-  if ($screenRow -ne $script:lastCursorRow -or $screenCol -ne $script:lastCursorCol) {
-    [void]$dirty.Append((Move-To $screenRow $screenCol))
-    $script:lastCursorRow = $screenRow
-    $script:lastCursorCol = $screenCol
-  }
-
-  [void]$dirty.Append("`e[?25h")
-  Out-Flush($dirty.ToString())
-  $state.Message = ''
-}
 
 function Show-Help {
   $width = [Console]::WindowWidth
@@ -1507,169 +1273,76 @@ function Search-Execute([string]$term) {
   $state.Message = ' Found '
 }
 
-function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
-  $key = $keyInfo.Key
-  $ctrl = ($keyInfo.Modifiers -band [ConsoleModifiers]::Control) -ne 0
-  $shift = ($keyInfo.Modifiers -band [ConsoleModifiers]::Shift) -ne 0
-  $char = $keyInfo.KeyChar
+function Get-CurrentIndent {
+  $t = BufText; $off = $state.Cursor; $ls = LineStart $off
+  $indent = ""; $i = $ls
+  while ($i -lt $off -and ($t[$i] -eq " " -or $t[$i] -eq "`t")) { $indent += $t[$i]; $i++ }
+  return $indent
+}
 
-  # ── Ctrl ────────────────────────────────────────────────────────────────
-  if ($ctrl) {
-    switch ($key) {
+function Handle-EditKey([ConsoleKeyInfo]$ki) {
+  $char = $ki.KeyChar; $mods = $ki.Modifiers
+  $ctrl = ($mods -band [System.ConsoleModifiers]::Control) -ne 0
+  $alt  = ($mods -band [System.ConsoleModifiers]::Alt) -ne 0
+  if ($ctrl -and -not $alt) {
+    switch ($ki.Key) {
+      'T' { $script:themeIdx = ($script:themeIdx + 1) % $script:themeNames.Count; $state.Message = " Theme: $($script:themes[$script:themeNames[$script:themeIdx]].name) "; Reset-RenderShadow; return }
       'D' {
         $script:diagPaneVisible = -not $script:diagPaneVisible
         if ($script:diagPaneVisible) {
           if ($script:diagPaneHeight -lt 1) { $script:diagPaneHeight = $script:diagDefaultHeight }
-          Write-DiagLog 'INFO' 'Diagnostic pane enabled.'
-          $state.Message = ' Diagnostics on '
+          Write-DiagLog 'INFO' 'Diagnostic pane enabled.'; $state.Message = ' Diagnostics on '
         } else { $script:diagDragging = $false; $state.Message = ' Diagnostics off ' }
         Reset-RenderShadow; return
       }
-      'T' {
-        $script:themeIdx = ($script:themeIdx + 1) % $script:themeNames.Count
-        $state.Message = " Theme: $($script:themes[$script:themeNames[$script:themeIdx]].name) "
-        Reset-RenderShadow; return
-      }
       'S' { State-SaveFile; return }
-      'Q' { $state.Mode = 'confirm-quit'; return }
+      'Q' { if ($state.Dirty) { $state.Mode = 'confirm-quit'; return }; $script:running = $false; return }
+      'F' { $state.Mode = 'search'; $state.SearchBuf = ''; return }
+      'V' { Paste-Text (Get-ClipboardText); return }
+      'C' { if ($state.SelActive) { Set-ClipboardText (Get-SelectionText) } else { Set-ClipboardText (GetLine (OffsetToRowCol $state.Cursor)[0]) }; $state.Message = ' Copied to clipboard '; return }
+      'X' { if ($state.SelActive) { Set-ClipboardText (Get-SelectionText); Delete-Selection }; return }
       'Z' { State-Undo; return }
       'Y' { State-Redo; return }
-      'F' { $state.Mode = 'search'; $state.SearchBuf = ''; return }
-      'A' {
-        $state.SelActive = $true; $state.SelAnchor = 0
-        $state.Cursor = BufLen
-        $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; return
-      }
-      'C' {
-        $text = Get-SelectionText
-        if ([string]::IsNullOrEmpty($text)) { $text = GetLine (OffsetToRowCol $state.Cursor)[0] }
-        Set-ClipboardText $text; $state.Message = ' Copied to clipboard '; return
-      }
-      'V' { Paste-Text (Get-ClipboardText); return }
-      'H' { Show-Help; return }
+      'A' { $state.SelActive = $true; $state.SelAnchor = 0; $state.Cursor = (BufLen); $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; return }
     }
-    return
   }
-
-  # ── navigation ───────────────────────────────────────────────────────────
-  switch ($key) {
-
-    'LeftArrow' {
-      if ($state.SelActive -and -not $shift) { $state.Cursor = (SelBounds)[0] }
-      elseif ($state.Cursor -gt 0) {
-        if ($shift -and -not $state.SelActive) { $state.SelAnchor = $state.Cursor; $state.SelActive = $true }
-        $state.Cursor--
-      }
-      if (-not $shift) { $state.SelActive = $false }
-      $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; return
-    }
-
-    'RightArrow' {
-      if ($state.SelActive -and -not $shift) { $state.Cursor = (SelBounds)[1] }
-      elseif ($state.Cursor -lt (BufLen)) {
-        if ($shift -and -not $state.SelActive) { $state.SelAnchor = $state.Cursor; $state.SelActive = $true }
-        $state.Cursor++
-      }
-      if (-not $shift) { $state.SelActive = $false }
-      $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; return
-    }
-
-    'UpArrow' {
-      if ($shift -and -not $state.SelActive) { $state.SelAnchor = $state.Cursor; $state.SelActive = $true }
-      if (-not $shift) { $state.SelActive = $false }
-      $row = (OffsetToRowCol $state.Cursor)[0]
-      if ($row -gt 0) { $state.Cursor = RowColToOffset ($row - 1) $state.PreferredCol }
+  switch ($ki.Key) {
+    'UpArrow'    { $shift = ($mods -band [System.ConsoleModifiers]::Shift) -ne 0; if ($shift -and -not $state.SelActive) { $state.SelAnchor = $state.Cursor; $state.SelActive = $true }; if (-not $shift) { $state.SelActive = $false }; $row = (OffsetToRowCol $state.Cursor)[0]; if ($row -gt 0) { $state.Cursor = RowColToOffset ($row - 1) $state.PreferredCol }; return }
+    'DownArrow'  { $shift = ($mods -band [System.ConsoleModifiers]::Shift) -ne 0; if ($shift -and -not $state.SelActive) { $state.SelAnchor = $state.Cursor; $state.SelActive = $true }; if (-not $shift) { $state.SelActive = $false }; $row = (OffsetToRowCol $state.Cursor)[0]; $state.Cursor = RowColToOffset ($row + 1) $state.PreferredCol; return }
+    'LeftArrow'  { $shift = ($mods -band [System.ConsoleModifiers]::Shift) -ne 0; if ($state.SelActive -and -not $shift) { $state.Cursor = (SelBounds)[0] } elseif ($state.Cursor -gt 0) { if ($shift -and -not $state.SelActive) { $state.SelAnchor = $state.Cursor; $state.SelActive = $true }; $state.Cursor-- }; if (-not $shift) { $state.SelActive = $false }; $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; return }
+    'RightArrow' { $shift = ($mods -band [System.ConsoleModifiers]::Shift) -ne 0; if ($state.SelActive -and -not $shift) { $state.Cursor = (SelBounds)[1] } elseif ($state.Cursor -lt (BufLen)) { if ($shift -and -not $state.SelActive) { $state.SelAnchor = $state.Cursor; $state.SelActive = $true }; $state.Cursor++ }; if (-not $shift) { $state.SelActive = $false }; $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; return }
+    'Home'       { $shift = ($mods -band [System.ConsoleModifiers]::Shift) -ne 0; if ($shift -and -not $state.SelActive) { $state.SelAnchor = $state.Cursor; $state.SelActive = $true }; if (-not $shift) { $state.SelActive = $false }; $state.Cursor = LineStart $state.Cursor; $state.PreferredCol = 0; return }
+    'End'        { $shift = ($mods -band [System.ConsoleModifiers]::Shift) -ne 0; if ($shift -and -not $state.SelActive) { $state.SelAnchor = $state.Cursor; $state.SelActive = $true }; if (-not $shift) { $state.SelActive = $false }; $state.Cursor = LineEnd $state.Cursor; $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; return }
+    'PageUp'     { $state.SelActive = $false; $page = [Console]::WindowHeight - 2; $row = (OffsetToRowCol $state.Cursor)[0]; $state.Cursor = RowColToOffset ([Math]::Max(0, $row - $page)) $state.PreferredCol; return }
+    'PageDown'   { $state.SelActive = $false; $page = [Console]::WindowHeight - 2; $row = (OffsetToRowCol $state.Cursor)[0]; $state.Cursor = RowColToOffset ($row + $page) $state.PreferredCol; return }
+    'Backspace'  {
+      if ($state.SelActive) { State-Snapshot; Delete-Selection; return }
+      if ($state.Cursor -gt 0) { State-Snapshot; $t = BufText; BufSet ($t.Substring(0, $state.Cursor - 1) + $t.Substring($state.Cursor)); $state.Cursor--; $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true }
       return
     }
-
-    'DownArrow' {
-      if ($shift -and -not $state.SelActive) { $state.SelAnchor = $state.Cursor; $state.SelActive = $true }
-      if (-not $shift) { $state.SelActive = $false }
-      $row = (OffsetToRowCol $state.Cursor)[0]
-      $state.Cursor = RowColToOffset ($row + 1) $state.PreferredCol; return
+    'Delete' {
+      if ($state.SelActive) { State-Snapshot; Delete-Selection; return }
+      if ($state.Cursor -lt (BufLen)) { State-Snapshot; $t = BufText; BufSet ($t.Substring(0, $state.Cursor) + $t.Substring($state.Cursor + 1)); $state.Dirty = $true }
+      return
     }
-
-    'Home' {
-      if ($shift -and -not $state.SelActive) { $state.SelAnchor = $state.Cursor; $state.SelActive = $true }
-      if (-not $shift) { $state.SelActive = $false }
-      $state.Cursor = LineStart $state.Cursor; $state.PreferredCol = 0; return
-    }
-
-    'End' {
-      if ($shift -and -not $state.SelActive) { $state.SelAnchor = $state.Cursor; $state.SelActive = $true }
-      if (-not $shift) { $state.SelActive = $false }
-      $state.Cursor = LineEnd $state.Cursor
-      $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; return
-    }
-
-    'PageUp' {
-      $state.SelActive = $false
-      $page = [Console]::WindowHeight - 2
-      $row = (OffsetToRowCol $state.Cursor)[0]
-      $state.Cursor = RowColToOffset ([Math]::Max(0, $row - $page)) $state.PreferredCol; return
-    }
-
-    'PageDown' {
-      $state.SelActive = $false
-      $page = [Console]::WindowHeight - 2
-      $row = (OffsetToRowCol $state.Cursor)[0]
-      $state.Cursor = RowColToOffset ($row + $page) $state.PreferredCol; return
-    }
-
-    # ── editing ─────────────────────────────────────────────────────────────
-
     'Enter' {
-      State-Snapshot
-      if ($state.SelActive) { Delete-Selection }
-      $curLine = GetLine (OffsetToRowCol $state.Cursor)[0]
-      $leadingWS = if ($curLine -match '^(\s+)') { $Matches[1] } else { '' }
-      $ins = "`n" + $leadingWS; $t = BufText
-      BufSet ($t.Substring(0, $state.Cursor) + $ins + $t.Substring($state.Cursor))
-      $state.Cursor += $ins.Length
-      $state.PreferredCol = $leadingWS.Length; $state.Dirty = $true; return
+      State-Snapshot; if ($state.SelActive) { Delete-Selection }
+      $indent = Get-CurrentIndent; $t = BufText
+      BufSet ($t.Substring(0, $state.Cursor) + "`n" + $indent + $t.Substring($state.Cursor))
+      $state.Cursor += 1 + $indent.Length; $state.PreferredCol = $indent.Length; $state.Dirty = $true; return
     }
-
-    'Backspace' {
-      if ($state.SelActive) { State-Snapshot; Delete-Selection; return }
-      if ($state.Cursor -gt 0) {
-        State-Snapshot; $t = BufText
-        BufSet ($t.Substring(0, $state.Cursor - 1) + $t.Substring($state.Cursor))
-        $state.Cursor--
-        $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true
-      }
-      return
-    }
-
-    { $_ -in 'Delete', 'DeleteChar' } {
-      if ($state.SelActive) { State-Snapshot; Delete-Selection; return }
-      if ($state.Cursor -lt (BufLen)) {
-        State-Snapshot; $t = BufText
-        BufSet ($t.Substring(0, $state.Cursor) + $t.Substring($state.Cursor + 1))
-        $state.Dirty = $true
-      }
-      return
-    }
-
     'Tab' {
-      State-Snapshot
-      if ($state.SelActive) { Delete-Selection }
+      State-Snapshot; if ($state.SelActive) { Delete-Selection }
       $ins = Get-IndentString; $t = BufText
       BufSet ($t.Substring(0, $state.Cursor) + $ins + $t.Substring($state.Cursor))
-      $state.Cursor += $ins.Length
-      $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true; return
+      $state.Cursor += $ins.Length; $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true; return
     }
-
     'Escape' { $state.SelActive = $false; return }
   }
-
-  # ── printable char ───────────────────────────────────────────────────────
   if ([int]$char -ge 32 -and [int]$char -ne 127) {
-    State-Snapshot
-    if ($state.SelActive) { Delete-Selection }
-    $t = BufText
-    BufSet ($t.Substring(0, $state.Cursor) + $char + $t.Substring($state.Cursor))
-    $state.Cursor++
-    $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true
+    State-Snapshot; if ($state.SelActive) { Delete-Selection }
+    $t = BufText; BufSet ($t.Substring(0, $state.Cursor) + $char + $t.Substring($state.Cursor))
+    $state.Cursor++; $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true
   }
 }
 
@@ -1712,102 +1385,36 @@ function Render-ConfirmQuit {
 function Edit-Babae {
   [CmdletBinding()]
   param([Parameter(Position = 0)][string]$Path)
-
-  State-Reset
-  Reset-RenderShadow
-
-  if ($Path) {
-    $resolved = Resolve-Path $Path -ErrorAction SilentlyContinue
-    $state.FilePath = if ($resolved) { $resolved.Path } else { Join-Path $PWD $Path }
-    State-LoadFile $state.FilePath
-    Load-EditorConfig $state.FilePath
-  } else {
-    BufSet ''
-    Load-EditorConfig ''
-  }
-  $oldCtrlC = [Console]::TreatControlCAsInput
-  [Console]::TreatControlCAsInput = $true
-
-  $script:diagPaneVisible = $DiagPane.IsPresent
-  $script:diagPaneHeight = $script:diagDefaultHeight
+  State-Reset; Reset-RenderShadow
+  if ($Path) { $resolved = Resolve-Path $Path -ErrorAction SilentlyContinue; $state.FilePath = if ($resolved) { $resolved.Path } else { Join-Path $PWD $Path }; State-LoadFile $state.FilePath; Load-EditorConfig $state.FilePath }
+  else { BufSet ''; Load-EditorConfig '' }
+  $oldCtrlC = [Console]::TreatControlCAsInput; [Console]::TreatControlCAsInput = $true
+  $script:diagPaneVisible = $DiagPane.IsPresent; $script:diagPaneHeight = $script:diagDefaultHeight
+  $script:diagDragging = $false
   $script:isUnix = $IsLinux -or $IsMacOS
   if ($script:isUnix -and -not [Console]::IsInputRedirected) {
-    $script:oldStty = stty -g 2>/dev/null
-    stty raw -echo 2>/dev/null
+    $script:oldStty = stty -g 2>/dev/null; stty raw -echo 2>/dev/null
   }
-
   Start-InputThread
-  # Enable bracketed paste mode (ESC[?2004h).  With this the terminal wraps
-  # every right-click / middle-click paste in ESC[200~...ESC[201~ sentinels.
-  # Our raw stdin reader picks those up and routes the payload directly to
-  # Paste-Text, bypassing the Enter handler and its auto-indent injection.
   Out-Flush("`e[?1049h`e[?2004h`e[?1000h`e[?1003h`e[?1006h`e[?25l`e[2J`e[H")
-
-  $prevWidth = 0
-  $prevHeight = 0
-  $script:running = $true
-
+  $prevWidth = 0; $prevHeight = 0; $script:running = $true
   try {
-            while ($script:running) {
-          $width = [Console]::WindowWidth; $height = [Console]::WindowHeight
-          if ($width -ne $prevWidth -or $height -ne $prevHeight) { $prevWidth = $width; $prevHeight = $height; Reset-RenderShadow }
-
-          Update-Scroll
-          Render-Frame
-
-          if ($script:mouseEnabled -and -not (Stdin-DataAvailable)) {
-            if ([BabaeWin]::PollRightClick($script:consoleHandle)) { Paste-Text (Get-ClipboardText); continue }
-            Start-Sleep -Milliseconds $script:frameDelayMs; continue
-          }
-
-          if (-not (Stdin-DataAvailable)) { Start-Sleep -Milliseconds $script:frameDelayMs; continue }
-
-          $event = Read-NextInputEvent
-          if ($null -eq $event) { continue }
-
-          if ($event.Kind -eq 'Paste') { Paste-Text $event.Text }
-          elseif ($event.Kind -eq 'Mouse') {
-            if ($event.Release) { $script:diagDragging = $false }
-            elseif ($event.Right -and $event.Down) { Paste-Text (Get-ClipboardText) }
-            elseif ($script:diagPaneVisible -and $event.Left -and $event.Down -and $event.Y -eq $script:diagDividerRow) { $script:diagDragging = $true; Handle-DiagMouseDrag $event.Y }
-            elseif ($script:diagDragging -and $event.Left -and ($event.Drag -or $event.Down)) { Handle-DiagMouseDrag $event.Y }
-          } else {
-            switch ($state.Mode) {
-              'edit'         { Handle-EditKey $event.KeyInfo }
-              'search'       { Handle-SearchKey $event.KeyInfo }
-              'confirm-quit' { Handle-ConfirmQuitKey $event.KeyInfo }
-            }
-          }
-          ClampCursor
-          if ($state.Mode -eq 'confirm-quit') {
-            if ($state.Dirty) { Render-ConfirmQuit } else { $script:running = $false; continue }
-          }
-        }
-
-      Update-Scroll
-      Render-Frame
-
-      # Windows-only: poll for right-click paste via Win32 mouse events.
+    while ($script:running) {
+      $width = [Console]::WindowWidth; $height = [Console]::WindowHeight
+      if ($width -ne $prevWidth -or $height -ne $prevHeight) { $prevWidth = $width; $prevHeight = $height; Reset-RenderShadow }
+      Update-Scroll; Render-Frame
       if ($script:mouseEnabled -and -not (Stdin-DataAvailable)) {
-        if ([BabaeWin]::PollRightClick($script:consoleHandle)) {
-          Paste-Text (Get-ClipboardText)
-          continue
-        }
-        Start-Sleep -Milliseconds $script:frameDelayMs
-        continue
+        if ([BabaeWin]::PollRightClick($script:consoleHandle)) { Paste-Text (Get-ClipboardText); continue }
+        Start-Sleep -Milliseconds $script:frameDelayMs; continue
       }
-
-      # Non-blocking: skip Read-NextInputEvent when nothing is waiting.
-      if (-not (Stdin-DataAvailable)) {
-        Start-Sleep -Milliseconds $script:frameDelayMs
-        continue
-      }
-
-      # Read one complete input event (key or paste) from raw stdin.
-      $event = Read-NextInputEvent
-
-      if ($event.Kind -eq 'Paste') {
-        Paste-Text $event.Text
+      if (-not (Stdin-DataAvailable)) { Start-Sleep -Milliseconds $script:frameDelayMs; continue }
+      $event = Read-NextInputEvent; if ($null -eq $event) { continue }
+      if ($event.Kind -eq 'Paste') { Paste-Text $event.Text }
+      elseif ($event.Kind -eq 'Mouse') {
+        if ($event.Release) { $script:diagDragging = $false }
+        elseif ($event.Right -and $event.Down) { Paste-Text (Get-ClipboardText) }
+        elseif ($script:diagPaneVisible -and $event.Left -and $event.Down -and $event.Y -eq $script:diagDividerRow) { $script:diagDragging = $true; Handle-DiagMouseDrag $event.Y }
+        elseif ($script:diagDragging -and $event.Left -and ($event.Drag -or $event.Down)) { Handle-DiagMouseDrag $event.Y }
       } else {
         switch ($state.Mode) {
           'edit'         { Handle-EditKey $event.KeyInfo }
@@ -1816,21 +1423,17 @@ function Edit-Babae {
         }
       }
       ClampCursor
-
-      if ($state.Mode -eq 'confirm-quit') {
-        if ($state.Dirty) { Render-ConfirmQuit } else { $script:running = $false; continue }
-      }
+      if ($state.Mode -eq 'confirm-quit') { if ($state.Dirty) { Render-ConfirmQuit } else { $script:running = $false; continue } }
     }
   } finally {
     Stop-InputThread
     if ($script:mouseEnabled) {
-      try { [BabaeWin]::SetModeValue($script:consoleHandle, $script:origConsoleMode) } catch {}
+      try { [BabaeWin]::SetModeValue($script:consoleHandle, $script:origConsoleMode) } catch { Write-DiagLog 'INPUT' "Windows console mode restore failed: $($_.Exception.Message)" }
     }
     [Console]::TreatControlCAsInput = $oldCtrlC
     if ($script:isUnix -and $script:oldStty -and -not [Console]::IsInputRedirected) {
-      try { stty $script:oldStty 2>/dev/null } catch {}
+      try { stty $script:oldStty 2>/dev/null } catch { Write-DiagLog 'INPUT' "stty restore failed: $($_.Exception.Message)" }
     }
-    # Disable bracketed paste mode before handing the terminal back.
     Out-Flush("`e[?1006l`e[?1003l`e[?1000l`e[?2004l`e[?1049l`e[?25h`e[0m")
     Write-Host 'babae: session ended.' -ForegroundColor Cyan
     if ($state.FilePath) { Write-Host "File : $($state.FilePath)" -ForegroundColor DarkGray }
