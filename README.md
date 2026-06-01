@@ -25,7 +25,6 @@
 - [Themes](#themes)
 - [Language Detection](#language-detection)
 - [The Stairway Paste Fix](#the-stairway-paste-fix)
-- [Diagnostics](#diagnostics)
 - [Testing](#testing)
 
 <!-- tocstop -->
@@ -40,7 +39,11 @@ Its primary reason for existence: most terminal editors misbehave when pasting i
 
 ## Key Features
 
+
 - **Zero Dependencies**: One file. `pwsh ./babae.ps1`. Done.
+- **High Performance**: $O(\log n)$ logical line lookups via a line-start index rebuilt only at mutation chokepoints. Handles large files with zero cursor lag.
+- **Live Diagnostic Pane**: Toggleable real-time event log with `^D`. Includes a 200-entry ring buffer and drag-to-resize support.
+
 - **SSH-Safe Paste**: Bracketed paste mode (BPM) support across both interactive and redirected stdin paths. Right-click paste over SSH does not staircase — ever. See [The Stairway Paste Fix](#the-stairway-paste-fix).
 - **ANSI TUI Rendering**: Low-flicker frame rendering via a shadow row buffer and direct stdout stream writes. Only changed rows are redrawn.
 - **Four Dark Themes**: babae dark, Catppuccin Mocha, Catppuccin Frappe, GitHub Dark. Cycle with `^T`.
@@ -50,8 +53,6 @@ Its primary reason for existence: most terminal editors misbehave when pasting i
 - **`.editorconfig` Support**: Picks up `indent_style`, `indent_size`, `end_of_line`, `trim_trailing_whitespace`, `insert_final_newline`, and `charset` from the nearest `.editorconfig`.
 - **Mouse Right-Click Paste on Windows**: Win32 console API integration for native right-click paste events.
 - **Language Detection**: Automatic language label in the header based on file extension (see [Language Detection](#language-detection)).
-- **Live Diagnostics Pane**: Real-time operational log and error routing with `^D`.
-- **$O(\log n)$ Performance**: Optimized logical-line indexing for fast cursor movement in large files.
 - **Global Install**: On first run outside `~/.babae/`, babae offers to install itself globally and register a `babae` shell function in your PowerShell profile.
 
 ## Environment Setup Guide
@@ -108,12 +109,12 @@ pwsh ./babae.ps1 myfile.txt
 
 # Open with a specific theme
 pwsh ./babae.ps1 myfile.txt -Theme mocha
+# Open with Diagnostic Pane enabled
+pwsh ./babae.ps1 myfile.txt -DiagPane
 
-# Open with live diagnostics pane
-pwsh ./babae.ps1 -DiagPane
+# Enable persistent file logging for troubleshooting
+pwsh ./babae.ps1 myfile.txt -DebugLog
 
-# Open with diagnostic logging to 'babae-debug.log'
-pwsh ./babae.ps1 -DebugLog
 ```
 
 ### Keybindings
@@ -129,7 +130,7 @@ pwsh ./babae.ps1 -DebugLog
 | `^C` | Copy selection (or current line) |
 | `^V` | Paste from clipboard |
 | `^T` | Cycle theme |
-| `^D` | Toggle diagnostics |
+| `^D` | Toggle Diagnostic Pane |
 | `^H` | Help |
 | `Arrow keys` | Move cursor |
 | `Shift+Arrows` | Extend selection |
@@ -149,6 +150,15 @@ pwsh ./babae.ps1 -DebugLog
 | `mocha` | Catppuccin Mocha |
 | `frappe` | Catppuccin Frappe |
 | `github-dark` | GitHub Dark |
+
+
+## Diagnostics & Mouse Support
+
+babae includes a built-in diagnostic system for troubleshooting terminal behavior and input sequences.
+
+- **Toggle Pane (`^D`)**: Opens a split-screen view at the bottom of the editor showing the last 200 internal events (input sequences, clipboard actions, etc.).
+- **Resize via Mouse**: When the diagnostic pane is visible, you can click and drag the divider line (the one labeled `DIAG`) to resize the viewport.
+- **File Logging (`-DebugLog`)**: When launched with the `-DebugLog` switch, all diagnostic events are also mirrored to `babae-debug.log` in the current directory.
 
 ## Language Detection
 
@@ -179,15 +189,6 @@ babae fixes this by enabling BPM (`ESC[?2004h`) on launch and running a **dual-p
 - **Redirected mode** (test harness / piped stdin): babae falls back to reading `Console.OpenStandardInput()` as a raw byte stream. BPM sentinels are detected at the byte level in `Stdin-DrainPaste`, making the test suite independent of any terminal or .NET console abstraction.
 
 In both paths, the paste payload never touches the `Enter` handler. No staircase.
-
-## Diagnostics
-
-babae includes a live diagnostic pane and file-based logging to aid in troubleshooting terminal and environment issues.
-
-- **Pane**: Toggle with `^D`. Displays the last 200 events (input sequences, IO errors, clipboard failures). The pane is resizable via mouse drag on the divider line.
-- **Log File**: Use the `-DebugLog` switch to mirror diagnostic events to `babae-debug.log` in the current directory.
-
-Failures that were previously silent (like clipboard access denied or Windows console mode errors) are now routed to this system for better observability.
 
 ## Testing
 

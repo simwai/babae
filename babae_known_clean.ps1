@@ -16,91 +16,7 @@
     pwsh ./babae.ps1 myfile.txt -Theme mocha
 #>
 param(
-  [Parameter(Position = 0)
-$script:frameDelayMs = 33
-$script:undoStackMax = 200
-$script:undoStackTrim = 100
-$script:pasteDeadlineMs = 2000
-$script:inputBufSize = 4096
-$script:maxSeqLen = 32
-$script:escapeTimeoutMs = 150
-$script:peekWaitMs = 50
-$script:diagDefaultHeight = 5
-$script:diagPaneMinHeight = 3
-$script:diagLogMaxEntries = 200
-
-$script:diagPaneVisible = $false
-$script:diagPaneHeight = 5
-$script:diagScrollOffset = 0
-$script:diagDragging = $false
-$script:diagDividerRow = -1
-$script:diagRingBuffer = [System.Collections.Generic.Queue[string]]::new()
-$script:lineIndex = @(0)
-
-$script:debugLog = $null
-if ($DebugLog.IsPresent) {
-  $script:debugLog = Join-Path . 'babae-debug.log'
-}
-][string]$Path,
-  [ValidateSet("dark", "mocha", "frappe", "github-dark")]
-  [string]$Theme = "dark",
-  [switch]$DiagPane,
-  [switch]$DebugLog
-)
-$script:frameDelayMs = 33
-$script:undoStackMax = 200
-$script:undoStackTrim = 100
-$script:pasteDeadlineMs = 2000
-$script:inputBufSize = 4096
-$script:maxSeqLen = 32
-$script:escapeTimeoutMs = 150
-$script:peekWaitMs = 50
-$script:diagDefaultHeight = 5
-$script:diagPaneMinHeight = 3
-$script:diagLogMaxEntries = 200
-
-$script:diagPaneVisible = $false
-$script:diagPaneHeight = 5
-$script:diagScrollOffset = 0
-$script:diagDragging = $false
-$script:diagDividerRow = -1
-$script:diagRingBuffer = [System.Collections.Generic.Queue[string]]::new()
-$script:lineIndex = @(0)
-
-
-][string]$Path,
-  [ValidateSet("dark", "mocha", "frappe", "github-dark")]
-  [string]$Theme = "dark",
-  [switch]$DiagPane,
-  [switch]$DebugLog
-)
-$script:frameDelayMs = 33
-$script:undoStackMax = 200
-$script:undoStackTrim = 100
-$script:pasteDeadlineMs = 2000
-$script:inputBufSize = 4096
-$script:maxSeqLen = 32
-$script:escapeTimeoutMs = 150
-$script:peekWaitMs = 50
-$script:diagDefaultHeight = 5
-$script:diagPaneMinHeight = 3
-$script:diagLogMaxEntries = 200
-
-$script:diagPaneVisible = $false
-$script:diagPaneHeight = 5
-$script:diagScrollOffset = 0
-$script:diagDragging = $false
-$script:diagDividerRow = -1
-$script:diagRingBuffer = [System.Collections.Generic.Queue[string]]::new()
-$script:lineIndex = @(0)
-
-
-][string]$Path,
-  [ValidateSet("dark", "mocha", "frappe", "github-dark")]
-  [string]$Theme = "dark",
-  [switch]$DiagPane,
-  [switch]$DebugLog
-)][string]$Path,
+  [Parameter(Position = 0)][string]$Path,
   [ValidateSet("dark", "mocha", "frappe", "github-dark")]
   [string]$Theme = "dark"
 )
@@ -164,8 +80,11 @@ $ErrorActionPreference = "Stop"
 [Console]::InputEncoding = [System.Text.Encoding]::UTF8
 
 $script:frameDelayMs = 33
-
-
+$script:debugLog = $null
+if ($DebugLog.IsPresent) {
+  $script:debugLog = Join-Path . 'babae-debug.log'
+}
+Write-Host $script:debugLog
 
 # ---------------------------------------------------------------------------
 # Themes
@@ -354,171 +273,6 @@ function Stdin-DrainPaste {
 
 # Synthesise a ConsoleKeyInfo from a raw char (for plain printable bytes and
 # control bytes that we handle ourselves).
-
-function Write-DiagLog([string]$category, [string]$message) {
-  if ($null -eq $script:diagRingBuffer) { $script:diagRingBuffer = [System.Collections.Generic.Queue[string]]::new() }
-  $line = "[{0}] [{1}] {2}" -f ([DateTimeOffset]::UtcNow.ToString('HH:mm:ss.fff')), $category.ToUpperInvariant(), $message
-  $script:diagRingBuffer.Enqueue($line)
-  while ($script:diagRingBuffer.Count -gt $script:diagLogMaxEntries) { [void]$script:diagRingBuffer.Dequeue() }
-  if ($script:debugLog) { try { Add-Content -LiteralPath $script:debugLog -Value $line -Encoding UTF8 } catch {} }
-}
-
-function Try-ParseMouseSequence([string]$seq) {
-  if ($seq -notmatch '^\[<(\d+);(\d+);(\d+)([Mm])$') { return $null }
-  $buttonCode = [int]$Matches[1]; $x = [int]$Matches[2]; $y = [int]$Matches[3]; $suffix = $Matches[4]; $release = ($suffix -eq 'm')
-  return [PSCustomObject]@{ Kind = 'Mouse'; X = $x; Y = $y; Left = (($buttonCode -band 3) -eq 0); Down = (-not $release); Release = $release; Drag = (($buttonCode -band 32) -ne 0); Right = (($buttonCode -band 3) -eq 2) }
-}
-
-function Rebuild-LineIndex {
-  $text = $state.Buffer.ToString(); $starts = [System.Collections.Generic.List[int]]::new(); $starts.Add(0)
-  $pos = -1; while (($pos = $text.IndexOf("`n", $pos + 1)) -ne -1) { $starts.Add($pos + 1) }
-  $script:lineIndex = $starts.ToArray()
-}
-
-function Find-LineRow([int]$offset) {
-  $idx = $script:lineIndex; if ($null -eq $idx -or $idx.Length -eq 0) { return 0 }
-  $lo = 0; $hi = $idx.Length - 1; while ($lo -le $hi) {
-    $mid = [int](($lo + $hi) / 2)
-    if ($idx[$mid] -le $offset) { if ($mid -eq ($idx.Length - 1) -or $idx[$mid + 1] -gt $offset) { return $mid }; $lo = $mid + 1 }
-    else { $hi = $mid - 1 }
-  }
-  return 0
-}
-
-function Sync-State {
-  Rebuild-LineIndex
-  $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]
-  $state.Dirty = $true
-}
-
-function Build-DiagRow([int]$rowIndex, [int]$screenWidth) {
-  if ($rowIndex -eq ($script:diagDividerRow - 1)) {
-    $plain = " DIAG | $($script:diagRingBuffer.Count) events | drag to resize | Ctrl+D hide "
-    $pad = [Math]::Max(0, $screenWidth - $plain.Length)
-    return "$(T 'bgBar')$(T 'fgAccent')${BOLD} DIAG $RESET$(T 'bgBar')$(T 'fgMuted')| $($script:diagRingBuffer.Count) events | drag to resize | Ctrl+D hide$(' ' * $pad)$RESET"
-  }
-  $entries = @($script:diagRingBuffer.ToArray()); $paneLine = $rowIndex - $script:diagDividerRow; $start = [Math]::Max(0, $entries.Count - $script:diagPaneHeight)
-  $idx = $start + $paneLine; $text = if ($idx -ge 0 -and $idx -lt $entries.Count) { $entries[$idx] } else { '' }
-  if ($text.Length -gt $screenWidth) { $text = $text.Substring(0, $screenWidth) }; $pad = [Math]::Max(0, $screenWidth - $text.Length)
-  return "$(T 'bg')$(T 'fgMuted')$text$(' ' * $pad)$RESET"
-}
-
-function Handle-DiagMouseDrag([int]$mouseRow) {
-  $height = [Console]::WindowHeight; $maxDiag = [Math]::Floor(($height - 4) / 2); if ($maxDiag -le 0) { return }
-  $minDiag = [Math]::Min($script:diagPaneMinHeight, $maxDiag); $newHeight = [Math]::Max(3, [Math]::Min($height - $mouseRow - 1, $maxDiag))
-  if ($newHeight -ne $script:diagPaneHeight) { $script:diagPaneHeight = $newHeight; Reset-RenderShadow }
-}
-
-
-function Write-DiagLog([string]$category, [string]$message) {
-  if ($null -eq $script:diagRingBuffer) { $script:diagRingBuffer = [System.Collections.Generic.Queue[string]]::new() }
-  $line = "[{0}] [{1}] {2}" -f ([DateTimeOffset]::UtcNow.ToString('HH:mm:ss.fff')), $category.ToUpperInvariant(), $message
-  $script:diagRingBuffer.Enqueue($line)
-  while ($script:diagRingBuffer.Count -gt $script:diagLogMaxEntries) { [void]$script:diagRingBuffer.Dequeue() }
-  if ($script:debugLog) { try { Add-Content -LiteralPath $script:debugLog -Value $line -Encoding UTF8 } catch {} }
-}
-
-function Try-ParseMouseSequence([string]$seq) {
-  if ($seq -notmatch '^\[<(\d+);(\d+);(\d+)([Mm])$') { return $null }
-  $buttonCode = [int]$Matches[1]; $x = [int]$Matches[2]; $y = [int]$Matches[3]; $suffix = $Matches[4]; $release = ($suffix -eq 'm')
-  return [PSCustomObject]@{ Kind = 'Mouse'; X = $x; Y = $y; Left = (($buttonCode -band 3) -eq 0); Down = (-not $release); Release = $release; Drag = (($buttonCode -band 32) -ne 0); Right = (($buttonCode -band 3) -eq 2) }
-}
-
-function Rebuild-LineIndex {
-  $text = $state.Buffer.ToString(); $starts = [System.Collections.Generic.List[int]]::new(); $starts.Add(0)
-  $pos = -1; while (($pos = $text.IndexOf("`n", $pos + 1)) -ne -1) { $starts.Add($pos + 1) }
-  $script:lineIndex = $starts.ToArray()
-}
-
-function Find-LineRow([int]$offset) {
-  $idx = $script:lineIndex; if ($null -eq $idx -or $idx.Length -eq 0) { return 0 }
-  $lo = 0; $hi = $idx.Length - 1; while ($lo -le $hi) {
-    $mid = [int](($lo + $hi) / 2)
-    if ($idx[$mid] -le $offset) { if ($mid -eq ($idx.Length - 1) -or $idx[$mid + 1] -gt $offset) { return $mid }; $lo = $mid + 1 }
-    else { $hi = $mid - 1 }
-  }
-  return 0
-}
-
-function Sync-State {
-  Rebuild-LineIndex
-  $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]
-  $state.Dirty = $true
-}
-
-function Build-DiagRow([int]$rowIndex, [int]$screenWidth) {
-  if ($rowIndex -eq ($script:diagDividerRow - 1)) {
-    $plain = " DIAG | $($script:diagRingBuffer.Count) events | drag to resize | Ctrl+D hide "
-    $pad = [Math]::Max(0, $screenWidth - $plain.Length)
-    return "$(T 'bgBar')$(T 'fgAccent')${BOLD} DIAG $RESET$(T 'bgBar')$(T 'fgMuted')| $($script:diagRingBuffer.Count) events | drag to resize | Ctrl+D hide$(' ' * $pad)$RESET"
-  }
-  $entries = @($script:diagRingBuffer.ToArray()); $paneLine = $rowIndex - $script:diagDividerRow; $start = [Math]::Max(0, $entries.Count - $script:diagPaneHeight)
-  $idx = $start + $paneLine; $text = if ($idx -ge 0 -and $idx -lt $entries.Count) { $entries[$idx] } else { '' }
-  if ($text.Length -gt $screenWidth) { $text = $text.Substring(0, $screenWidth) }; $pad = [Math]::Max(0, $screenWidth - $text.Length)
-  return "$(T 'bg')$(T 'fgMuted')$text$(' ' * $pad)$RESET"
-}
-
-function Handle-DiagMouseDrag([int]$mouseRow) {
-  $height = [Console]::WindowHeight; $maxDiag = [Math]::Floor(($height - 4) / 2); if ($maxDiag -le 0) { return }
-  $minDiag = [Math]::Min($script:diagPaneMinHeight, $maxDiag); $newHeight = [Math]::Max(3, [Math]::Min($height - $mouseRow - 1, $maxDiag))
-  if ($newHeight -ne $script:diagPaneHeight) { $script:diagPaneHeight = $newHeight; Reset-RenderShadow }
-}
-
-
-function Write-DiagLog([string]$category, [string]$message) {
-  if ($null -eq $script:diagRingBuffer) { $script:diagRingBuffer = [System.Collections.Generic.Queue[string]]::new() }
-  $line = "[{0}] [{1}] {2}" -f ([DateTimeOffset]::UtcNow.ToString('HH:mm:ss.fff')), $category.ToUpperInvariant(), $message
-  $script:diagRingBuffer.Enqueue($line)
-  while ($script:diagRingBuffer.Count -gt $script:diagLogMaxEntries) { [void]$script:diagRingBuffer.Dequeue() }
-  if ($script:debugLog) { try { Add-Content -LiteralPath $script:debugLog -Value $line -Encoding UTF8 } catch {} }
-}
-
-function Try-ParseMouseSequence([string]$seq) {
-  if ($seq -notmatch '^\[<(\d+);(\d+);(\d+)([Mm])$') { return $null }
-  $buttonCode = [int]$Matches[1]; $x = [int]$Matches[2]; $y = [int]$Matches[3]; $suffix = $Matches[4]; $release = ($suffix -eq 'm')
-  return [PSCustomObject]@{ Kind = 'Mouse'; X = $x; Y = $y; Left = (($buttonCode -band 3) -eq 0); Down = (-not $release); Release = $release; Drag = (($buttonCode -band 32) -ne 0); Right = (($buttonCode -band 3) -eq 2) }
-}
-
-function Rebuild-LineIndex {
-  $text = $state.Buffer.ToString(); $starts = [System.Collections.Generic.List[int]]::new(); $starts.Add(0)
-  $pos = -1; while (($pos = $text.IndexOf("`n", $pos + 1)) -ne -1) { $starts.Add($pos + 1) }
-  $script:lineIndex = $starts.ToArray()
-}
-
-function Find-LineRow([int]$offset) {
-  $idx = $script:lineIndex; if ($null -eq $idx -or $idx.Length -eq 0) { return 0 }
-  $lo = 0; $hi = $idx.Length - 1; while ($lo -le $hi) {
-    $mid = [int](($lo + $hi) / 2)
-    if ($idx[$mid] -le $offset) { if ($mid -eq ($idx.Length - 1) -or $idx[$mid + 1] -gt $offset) { return $mid }; $lo = $mid + 1 }
-    else { $hi = $mid - 1 }
-  }
-  return 0
-}
-
-function Sync-State {
-  Rebuild-LineIndex
-  $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]
-  $state.Dirty = $true
-}
-
-function Build-DiagRow([int]$rowIndex, [int]$screenWidth) {
-  if ($rowIndex -eq ($script:diagDividerRow - 1)) {
-    $plain = " DIAG | $($script:diagRingBuffer.Count) events | drag to resize | Ctrl+D hide "
-    $pad = [Math]::Max(0, $screenWidth - $plain.Length)
-    return "$(T 'bgBar')$(T 'fgAccent')${BOLD} DIAG $RESET$(T 'bgBar')$(T 'fgMuted')| $($script:diagRingBuffer.Count) events | drag to resize | Ctrl+D hide$(' ' * $pad)$RESET"
-  }
-  $entries = @($script:diagRingBuffer.ToArray()); $paneLine = $rowIndex - $script:diagDividerRow; $start = [Math]::Max(0, $entries.Count - $script:diagPaneHeight)
-  $idx = $start + $paneLine; $text = if ($idx -ge 0 -and $idx -lt $entries.Count) { $entries[$idx] } else { '' }
-  if ($text.Length -gt $screenWidth) { $text = $text.Substring(0, $screenWidth) }; $pad = [Math]::Max(0, $screenWidth - $text.Length)
-  return "$(T 'bg')$(T 'fgMuted')$text$(' ' * $pad)$RESET"
-}
-
-function Handle-DiagMouseDrag([int]$mouseRow) {
-  $height = [Console]::WindowHeight; $maxDiag = [Math]::Floor(($height - 4) / 2); if ($maxDiag -le 0) { return }
-  $minDiag = [Math]::Min($script:diagPaneMinHeight, $maxDiag); $newHeight = [Math]::Max(3, [Math]::Min($height - $mouseRow - 1, $maxDiag))
-  if ($newHeight -ne $script:diagPaneHeight) { $script:diagPaneHeight = $newHeight; Reset-RenderShadow }
-}
-
 function Make-KeyInfo([char]$ch, [System.ConsoleKey]$key, [System.ConsoleModifiers]$mods) {
   return [System.ConsoleKeyInfo]::new($ch, $key, `
     ($mods -band [System.ConsoleModifiers]::Shift) -ne 0, `
@@ -668,22 +422,26 @@ function Stdin-ReadKey {
 
 function Read-NextInputEvent {
   if (-not [Console]::IsInputRedirected) {
-    $ki = Stdin-ReadKey; if ($null -eq $ki) { return $null }
+    $ki = Stdin-ReadKey
+    if ($null -eq $ki) { return $null }
     if ($ki.Key -eq [System.ConsoleKey]::Escape) {
-      $seq = ''; $seqBufKeys = [System.Collections.Generic.List[object]]::new(); $waited = 0
-      while ($seq.Length -lt $script:maxSeqLen -and $waited -lt $script:escapeTimeoutMs) {
+      $seq = "`e"
+      $seqBufKeys = [System.Collections.Generic.List[object]]::new()
+      $waited = 0
+      while ($seq.Length -lt 6 -and $waited -lt 100) {
         $nki = $null
         if ($script:inputQueue.TryDequeue([ref]$nki)) {
-          if ($nki -is [pscustomobject] -and $nki.Kind -eq 'Diag') { Write-DiagLog 'INPUT' "Input thread failed: $($nki.Message)"; continue }
-          $seq += [string]$nki.KeyChar; $seqBufKeys.Add($nki)
-          if ($seq -eq '[200~') { return [PSCustomObject]@{ Kind = 'Paste'; Text = Stdin-DrainPasteInteractive } }
-          $mouseEvent = Try-ParseMouseSequence $seq; if ($null -ne $mouseEvent) { return $mouseEvent }
-          $parsed = Parse-EscapeSequence $seq; if ($parsed.Key -ne [System.ConsoleKey]::NoName) { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = $parsed } }
-          $couldContinue = '[200~'.StartsWith($seq) -or $seq -eq '[' -or $seq -eq '[<' -or $seq -match '^\[<[\d;]*[Mm]?$'
-          if (-not $couldContinue) { foreach ($k in $seqBufKeys) { $script:inputPendingKeys.Enqueue($k) }; break }
-        } else { [System.Threading.Thread]::Sleep(5); $waited += 5 }
+          $seq += $nki.KeyChar
+          $seqBufKeys.Add($nki)
+          if ($seq -eq "`e[200~") { return [PSCustomObject]@{ Kind = "Paste"; Text = Stdin-DrainPasteInteractive } }
+          if (-not "`e[200~".StartsWith($seq)) {
+            foreach ($k in $seqBufKeys) { $script:inputPendingKeys.Enqueue($k) }
+            break
+          }
+        } else {
+          [System.Threading.Thread]::Sleep(5); $waited += 5
+        }
       }
-      return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Make-KeyInfo ([char]27) ([System.ConsoleKey]::Escape) 0) }
     }
     return [PSCustomObject]@{ Kind = "Key"; KeyInfo = $ki }
   }
@@ -798,9 +556,6 @@ function Read-NextInputEvent {
   # Map printable to a ConsoleKey — best-effort, editor only uses KeyChar.
   $ck = try { [System.ConsoleKey]$ch.ToString().ToUpper() } catch { [System.ConsoleKey]::NoName }
   return [PSCustomObject]@{ Kind='Key'; KeyInfo=(Make-KeyInfo $ch $ck 0) }
-
-
-
 }
 $script:lastRows = [System.Collections.Generic.List[string]]::new()
 $script:lastCursorRow = -1
@@ -843,7 +598,7 @@ $script:ec = @{
 }
 # Single source of truth for all keybindings — consumed by status bar + help dialog
 $script:commands = @(
-  [PSCustomObject]@{ Key = '^T'; Label = 'Theme' }; [PSCustomObject]@{ Key = '^D'; Label = 'Diag' }; [PSCustomObject]@{ Key = '^D'; Label = 'Diag' }; [PSCustomObject]@{ Key = '^D'; Label = 'Diag' }
+  [PSCustomObject]@{ Key = '^T'; Label = 'Theme' }
   [PSCustomObject]@{ Key = '^S'; Label = 'Save' }
   [PSCustomObject]@{ Key = '^Q'; Label = 'Quit' }
   [PSCustomObject]@{ Key = '^F'; Label = 'Find' }
@@ -1094,28 +849,71 @@ $state = [PSCustomObject]@{
 
 function BufText { $state.Buffer.ToString() }
 function BufLen { $state.Buffer.Length }
-function BufSet([string]$text) { $state.Buffer.Clear() | Out-Null; if ($text) { $state.Buffer.Append($text) | Out-Null }; Rebuild-LineIndex }
+function BufSet([string]$text) {
+  $state.Buffer.Clear() | Out-Null
+  if ($text) { $state.Buffer.Append($text) | Out-Null }
+}
 function ClampCursor {
   $state.Cursor = [Math]::Max(0, [Math]::Min($state.Cursor, (BufLen)))
 }
 
 # 0-based [row, col] for a buffer offset
-function OffsetToRowCol([int]$offset) { $off = [Math]::Max(0, [Math]::Min($offset, (BufLen))); $row = Find-LineRow $off; return $row, ($off - $script:lineIndex[$row]) }
+function OffsetToRowCol([int]$offset) {
+  $t = BufText
+  $off = [Math]::Max(0, [Math]::Min($offset, $t.Length))
+  $row = 0; $ls = 0
+  for ($i = 0; $i -lt $off; $i++) {
+    if ($t[$i] -eq "`n") { $row++; $ls = $i + 1 }
+  }
+  return $row, ($off - $ls)
+}
 
 # Offset of first char of the line containing $offset
-function LineStart([int]$offset) { $off = [Math]::Max(0, [Math]::Min($offset, (BufLen))); return $script:lineIndex[(Find-LineRow $off)] }
+function LineStart([int]$offset) {
+  $t = BufText
+  while ($offset -gt 0 -and $t[$offset - 1] -ne "`n") { $offset-- }
+  return $offset
+}
 
 # Offset just past the last char of the line (before \n or at end-of-buffer)
-function LineEnd([int]$offset) { $off = [Math]::Max(0, [Math]::Min($offset, (BufLen))); $row = Find-LineRow $off; return if ($row -lt ($script:lineIndex.Length - 1)) { $script:lineIndex[$row + 1] - 1 } else { (BufLen) } }
+function LineEnd([int]$offset) {
+  $t = BufText
+  while ($offset -lt $t.Length -and $t[$offset] -ne "`n") { $offset++ }
+  return $offset
+}
 
 # Text of logical line $n (0-based); $null when out of range
-function GetLine([int]$n) { if ($n -lt 0 -or $n -ge $script:lineIndex.Length) { return $null }; $start = $script:lineIndex[$n]; $end = if ($n -lt ($script:lineIndex.Length - 1)) { $script:lineIndex[$n + 1] - 1 } else { (BufLen) }; return (BufText).Substring($start, $end - $start) }
+function GetLine([int]$n) {
+  $t = BufText; $row = 0; $start = 0
+  for ($i = 0; $i -le $t.Length; $i++) {
+    if ($i -eq $t.Length -or $t[$i] -eq "`n") {
+      if ($row -eq $n) { return $t.Substring($start, $i - $start) }
+      $row++; $start = $i + 1
+    }
+  }
+  return $null
+}
 
 # Buffer offset for [row, col] — col is clamped to line length
-function RowColToOffset([int]$row, [int]$col) { if ($script:lineIndex.Length -eq 0) { return 0 }; $row = [Math]::Max(0, [Math]::Min($row, $script:lineIndex.Length - 1)); $start = $script:lineIndex[$row]; $end = if ($row -lt ($script:lineIndex.Length - 1)) { $script:lineIndex[$row + 1] - 1 } else { (BufLen) }; return $start + [Math]::Max(0, [Math]::Min($col, $end - $start)) }
+function RowColToOffset([int]$row, [int]$col) {
+  $t = BufText; $r = 0; $start = 0
+  for ($i = 0; $i -le $t.Length; $i++) {
+    if ($i -eq $t.Length -or $t[$i] -eq "`n") {
+      if ($r -eq $row) {
+        return $start + [Math]::Max(0, [Math]::Min($col, $i - $start))
+      }
+      $r++; $start = $i + 1
+    }
+  }
+  return $t.Length   # row beyond last line — clamp to end
+}
 
 # Total number of logical lines
-function LineCount { return [Math]::Max(1, $script:lineIndex.Length) }
+function LineCount {
+  $t = BufText
+  if ($t.Length -eq 0) { return 1 }
+  return 1 + ($t.ToCharArray() | Where-Object { $_ -eq "`n" }).Count
+}
 
 # Ordered [lo, hi] selection offsets
 function SelBounds {
@@ -1200,7 +998,14 @@ function Get-SelectionText {
   (BufText).Substring($a, $b - $a)
 }
 
-function Delete-Selection { $a, $b = SelBounds; [void]$state.Buffer.Remove($a, $b - $a); $state.Cursor = $a; $state.SelActive = $false; Sync-State }
+function Delete-Selection {
+  if (-not $state.SelActive) { return }
+  $a, $b = SelBounds; $t = BufText
+  BufSet ($t.Substring(0, $a) + $t.Substring($b))
+  $state.Cursor = $a
+  $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]
+  $state.SelActive = $false; $state.Dirty = $true
+}
 
 function Begin-Sel {
   if (-not $state.SelActive) {
@@ -1209,15 +1014,23 @@ function Begin-Sel {
   }
 }
 
-function Paste-Text([string]$text) { if (-not $text) { return }; State-Snapshot; if ($state.SelActive) { Delete-Selection }; [void]$state.Buffer.Insert($state.Cursor, $text); $state.Cursor += $text.Length; Sync-State }
+function Paste-Text([string]$text) {
+  if ([string]::IsNullOrEmpty($text)) { $state.Message = ' Clipboard empty '; return }
+  State-Snapshot
+  if ($state.SelActive) { Delete-Selection }
+  $norm = $text -replace "`r`n", "`n" -replace "`r", "`n"
+  $t = BufText
+  BufSet ($t.Substring(0, $state.Cursor) + $norm + $t.Substring($state.Cursor))
+  $state.Cursor += $norm.Length
+  $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]
+  $state.Dirty = $true; $state.Message = ' Pasted (clipboard) '; Reset-RenderShadow
+}
 
 
 function Clamp-Cursor { ClampCursor }
 
 function Update-Scroll {
-  $isRedirected = [Console]::IsInputRedirected
-  $diagRows = if ($script:diagPaneVisible -and -not $isRedirected) { $script:diagPaneHeight + 1 } else { 0 }
-  $height = [Math]::Max(1, [Console]::WindowHeight - 2 - $diagRows)
+  $height = [Console]::WindowHeight - 2
   $curRow = (OffsetToRowCol $state.Cursor)[0]
   if ($curRow -lt $state.ScrollRow) { $state.ScrollRow = $curRow }
   elseif ($curRow -ge $state.ScrollRow + $height) { $state.ScrollRow = $curRow - $height + 1 }
@@ -1316,25 +1129,45 @@ function Build-EditorRow([int]$rowIndex, [int]$screenWidth, [int]$textWidth) {
 }
 
 function Render-Frame {
-  $width = [Console]::WindowWidth; $height = [Console]::WindowHeight; $textWidth = $width - 5
-  $isRedirected = [Console]::IsInputRedirected
-  if ($script:diagPaneVisible -and -not $isRedirected) {
-    $maxDiag = [Math]::Floor(($height - 4) / 2)
-    if ($maxDiag -le 0) { $script:diagPaneVisible = $false; $script:diagDividerRow = -1 }
-    else { $minDiag = [Math]::Min($script:diagPaneMinHeight, $maxDiag); $script:diagPaneHeight = [Math]::Max($minDiag, [Math]::Min($script:diagPaneHeight, $maxDiag)); $script:diagDividerRow = $height - 1 - $script:diagPaneHeight }
-  } else { $script:diagDividerRow = -1 }
-  if ($script:lastRows.Count -ne $height) { Reset-RenderShadow; for ($i = 0; $i -lt $height; $i++) { $script:lastRows.Add("") }; Out-Flush("`e[2J`e[?25l"); $script:lastCursorVisible = $false }
-  $dirty = [System.Text.StringBuilder]::new()
-  for ($row = 0; $row -lt $height; $row++) {
-    if ($script:diagPaneVisible -and -not $isRedirected -and $row -ge ($script:diagDividerRow - 1) -and $row -lt ($height - 1)) { $rendered = Build-DiagRow $row $width }
-    else { $rendered = Build-EditorRow $row $width $textWidth }
-    if ($script:lastRows[$row] -ne $rendered) { $script:lastRows[$row] = $rendered; [void]$dirty.Append((Move-To ($row + 1) 1)); [void]$dirty.Append($rendered) }
+  $width = [Console]::WindowWidth
+  $height = [Console]::WindowHeight
+  $textWidth = $width - 5
+
+  if ($script:lastRows.Count -ne $height) {
+    Reset-RenderShadow
+    for ($i = 0; $i -lt $height; $i++) { $script:lastRows.Add('') }
+    Out-Flush("`e[2J`e[?25l")
+    $script:lastCursorVisible = $false
   }
-  $curR, $curC = OffsetToRowCol $state.Cursor; $vRow = $curR - $state.ScrollRow + 2
-  $diagRows = if ($script:diagPaneVisible -and -not $isRedirected) { $script:diagPaneHeight + 1 } else { 0 }
-  if ($vRow -ge 2 -and $vRow -lt ($height - $diagRows)) { [void]$dirty.Append((Move-To $vRow ($curC + 6))); [void]$dirty.Append("`e[?25h"); $script:lastCursorVisible = $true }
-  else { [void]$dirty.Append("`e[?25l"); $script:lastCursorVisible = $false }
+
+  $dirty = [System.Text.StringBuilder]::new()
+  if (-not $script:lastCursorVisible) {
+    [void]$dirty.Append("`e[?25l")
+    $script:lastCursorVisible = $true
+  }
+
+  for ($row = 0; $row -lt $height; $row++) {
+    $rendered = Build-EditorRow $row $width $textWidth
+    if ($script:lastRows[$row] -ne $rendered) {
+      $script:lastRows[$row] = $rendered
+      [void]$dirty.Append((Move-To ($row + 1) 1))
+      [void]$dirty.Append($rendered)
+    }
+  }
+
+  # Cursor screen position derived from buffer offset
+  $cr, $cc = OffsetToRowCol $state.Cursor
+  $screenRow = $cr - $state.ScrollRow + 2
+  $screenCol = $cc + 6
+  if ($screenRow -ne $script:lastCursorRow -or $screenCol -ne $script:lastCursorCol) {
+    [void]$dirty.Append((Move-To $screenRow $screenCol))
+    $script:lastCursorRow = $screenRow
+    $script:lastCursorCol = $screenCol
+  }
+
+  [void]$dirty.Append("`e[?25h")
   Out-Flush($dirty.ToString())
+  $state.Message = ''
 }
 
 function Show-Help {
@@ -1409,33 +1242,6 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
       'T' {
         $script:themeIdx = ($script:themeIdx + 1) % $script:themeNames.Count
         $state.Message = " Theme: $($script:themes[$script:themeNames[$script:themeIdx]].name) "
-        Reset-RenderShadow; return
-      }
-      'D' {
-        $script:diagPaneVisible = -not $script:diagPaneVisible
-        if ($script:diagPaneVisible) {
-          if ($script:diagPaneHeight -lt 1) { $script:diagPaneHeight = 5 }
-          Write-DiagLog 'INFO' 'Diagnostic pane enabled.'
-          $state.Message = ' Diagnostics on '
-        } else { $script:diagDragging = $false; $state.Message = ' Diagnostics off ' }
-        Reset-RenderShadow; return
-      }
-      'D' {
-        $script:diagPaneVisible = -not $script:diagPaneVisible
-        if ($script:diagPaneVisible) {
-          if ($script:diagPaneHeight -lt 1) { $script:diagPaneHeight = 5 }
-          Write-DiagLog 'INFO' 'Diagnostic pane enabled.'
-          $state.Message = ' Diagnostics on '
-        } else { $script:diagDragging = $false; $state.Message = ' Diagnostics off ' }
-        Reset-RenderShadow; return
-      }
-      'D' {
-        $script:diagPaneVisible = -not $script:diagPaneVisible
-        if ($script:diagPaneVisible) {
-          if ($script:diagPaneHeight -lt 1) { $script:diagPaneHeight = 5 }
-          Write-DiagLog 'INFO' 'Diagnostic pane enabled.'
-          $state.Message = ' Diagnostics on '
-        } else { $script:diagDragging = $false; $state.Message = ' Diagnostics off ' }
         Reset-RenderShadow; return
       }
       'S' { State-SaveFile; return }
@@ -1532,13 +1338,18 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
       $curLine = GetLine (OffsetToRowCol $state.Cursor)[0]
       $leadingWS = if ($curLine -match '^(\s+)') { $Matches[1] } else { '' }
       $ins = "`n" + $leadingWS; $t = BufText
-      [void]$state.Buffer.Insert($state.Cursor, $ins); $state.Cursor += $ins.Length; Sync-State; return
+      BufSet ($t.Substring(0, $state.Cursor) + $ins + $t.Substring($state.Cursor))
+      $state.Cursor += $ins.Length
+      $state.PreferredCol = $leadingWS.Length; $state.Dirty = $true; return
     }
 
     'Backspace' {
       if ($state.SelActive) { State-Snapshot; Delete-Selection; return }
       if ($state.Cursor -gt 0) {
-        State-Snapshot; [void]$state.Buffer.Remove($state.Cursor - 1, 1); $state.Cursor--; Sync-State
+        State-Snapshot; $t = BufText
+        BufSet ($t.Substring(0, $state.Cursor - 1) + $t.Substring($state.Cursor))
+        $state.Cursor--
+        $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true
       }
       return
     }
@@ -1546,7 +1357,9 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
     { $_ -in 'Delete', 'DeleteChar' } {
       if ($state.SelActive) { State-Snapshot; Delete-Selection; return }
       if ($state.Cursor -lt (BufLen)) {
-        State-Snapshot; [void]$state.Buffer.Remove($state.Cursor, 1); Sync-State
+        State-Snapshot; $t = BufText
+        BufSet ($t.Substring(0, $state.Cursor) + $t.Substring($state.Cursor + 1))
+        $state.Dirty = $true
       }
       return
     }
@@ -1554,7 +1367,10 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
     'Tab' {
       State-Snapshot
       if ($state.SelActive) { Delete-Selection }
-      $ins = Get-IndentString; [void]$state.Buffer.Insert($state.Cursor, $ins); $state.Cursor += $ins.Length; Sync-State; return
+      $ins = Get-IndentString; $t = BufText
+      BufSet ($t.Substring(0, $state.Cursor) + $ins + $t.Substring($state.Cursor))
+      $state.Cursor += $ins.Length
+      $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true; return
     }
 
     'Escape' { $state.SelActive = $false; return }
@@ -1562,7 +1378,12 @@ function Handle-EditKey([ConsoleKeyInfo]$keyInfo) {
 
   # ── printable char ───────────────────────────────────────────────────────
   if ([int]$char -ge 32 -and [int]$char -ne 127) {
-    State-Snapshot; if ($state.SelActive) { Delete-Selection }; [void]$state.Buffer.Insert($state.Cursor, $char); $state.Cursor++; Sync-State
+    State-Snapshot
+    if ($state.SelActive) { Delete-Selection }
+    $t = BufText
+    BufSet ($t.Substring(0, $state.Cursor) + $char + $t.Substring($state.Cursor))
+    $state.Cursor++
+    $state.PreferredCol = (OffsetToRowCol $state.Cursor)[1]; $state.Dirty = $true
   }
 }
 
@@ -1603,23 +1424,75 @@ function Render-ConfirmQuit {
 }
 
 function Edit-Babae {
-  $oldCtrlC = [Console]::TreatControlCAsInput; [Console]::TreatControlCAsInput = $true
-  $script:diagPaneVisible = $DiagPane.IsPresent; $script:diagPaneHeight = 5; $script:diagDragging = $false
+  [CmdletBinding()]
+  param([Parameter(Position = 0)][string]$Path)
+
+  State-Reset
+  Reset-RenderShadow
+
+  if ($Path) {
+    $resolved = Resolve-Path $Path -ErrorAction SilentlyContinue
+    $state.FilePath = if ($resolved) { $resolved.Path } else { Join-Path $PWD $Path }
+    State-LoadFile $state.FilePath
+    Load-EditorConfig $state.FilePath
+  } else {
+    BufSet ''
+    Load-EditorConfig ''
+  }
+  $oldCtrlC = [Console]::TreatControlCAsInput
+  [Console]::TreatControlCAsInput = $true
+
   $script:isUnix = $IsLinux -or $IsMacOS
-  if ($script:isUnix -and -not [Console]::IsInputRedirected) { $script:oldStty = stty -g 2>/dev/null; stty raw -echo 2>/dev/null }
+  if ($script:isUnix -and -not [Console]::IsInputRedirected) {
+    $script:oldStty = stty -g 2>/dev/null
+    stty raw -echo 2>/dev/null
+  }
+
   Start-InputThread
+  # Enable bracketed paste mode (ESC[?2004h).  With this the terminal wraps
+  # every right-click / middle-click paste in ESC[200~...ESC[201~ sentinels.
+  # Our raw stdin reader picks those up and routes the payload directly to
+  # Paste-Text, bypassing the Enter handler and its auto-indent injection.
+  Out-Flush("`e[?1049h`e[?2004h`e[?25l`e[2J`e[H")
+
+  $prevWidth = 0
+  $prevHeight = 0
+  $script:running = $true
+
   try {
-    if ($state.FilePath -and (Test-Path $state.FilePath)) { BufSet (Get-Content $state.FilePath -Raw) } else { BufSet "" }
-    Out-Flush("`e[?1049h`e[?2004h$((if(-not [Console]::IsInputRedirected){"`e[?1000h`e[?1003h`e[?1006h"}else{""}))`e[?25l`e[2J`e[H")
     while ($script:running) {
-      Update-Scroll; Render-Frame; $event = Read-NextInputEvent
-      if ($null -eq $event) { if ([Console]::IsInputRedirected) { $script:running = $false }; continue }
-      if ($event.Kind -eq 'Paste') { Paste-Text $event.Text }
-      elif ($event.Kind -eq 'Mouse') {
-        if ($event.Release) { $script:diagDragging = $false }
-        elif ($event.Right -and $event.Down) { Paste-Text (Get-ClipboardText) }
-        elif ($script:diagPaneVisible -and $event.Left -and $event.Down -and $event.Y -eq $script:diagDividerRow) { $script:diagDragging = $true; Handle-DiagMouseDrag $event.Y }
-        elif ($script:diagDragging -and $event.Left -and ($event.Drag -or $event.Down)) { Handle-DiagMouseDrag $event.Y }
+      $width = [Console]::WindowWidth
+      $height = [Console]::WindowHeight
+      if ($width -ne $prevWidth -or $height -ne $prevHeight) {
+        $prevWidth = $width
+        $prevHeight = $height
+        Reset-RenderShadow
+      }
+
+      Update-Scroll
+      Render-Frame
+
+      # Windows-only: poll for right-click paste via Win32 mouse events.
+      if ($script:mouseEnabled -and -not (Stdin-DataAvailable)) {
+        if ([BabaeWin]::PollRightClick($script:consoleHandle)) {
+          Paste-Text (Get-ClipboardText)
+          continue
+        }
+        Start-Sleep -Milliseconds $script:frameDelayMs
+        continue
+      }
+
+      # Non-blocking: skip Read-NextInputEvent when nothing is waiting.
+      if (-not (Stdin-DataAvailable)) {
+        Start-Sleep -Milliseconds $script:frameDelayMs
+        continue
+      }
+
+      # Read one complete input event (key or paste) from raw stdin.
+      $event = Read-NextInputEvent
+
+      if ($event.Kind -eq 'Paste') {
+        Paste-Text $event.Text
       } else {
         switch ($state.Mode) {
           'edit'         { Handle-EditKey $event.KeyInfo }
@@ -1627,14 +1500,25 @@ function Edit-Babae {
           'confirm-quit' { Handle-ConfirmQuitKey $event.KeyInfo }
         }
       }
-      if ($state.Mode -eq 'confirm-quit') { if ($state.Dirty) { Render-ConfirmQuit } else { $script:running = $false; continue } }
+      ClampCursor
+
+      if ($state.Mode -eq 'confirm-quit') {
+        if ($state.Dirty) { Render-ConfirmQuit } else { $script:running = $false; continue }
+      }
     }
   } finally {
     Stop-InputThread
+    if ($script:mouseEnabled) {
+      try { [BabaeWin]::SetModeValue($script:consoleHandle, $script:origConsoleMode) } catch {}
+    }
     [Console]::TreatControlCAsInput = $oldCtrlC
-    if ($script:isUnix -and $script:oldStty -and -not [Console]::IsInputRedirected) { try { stty $script:oldStty 2>/dev/null } catch {} }
-    Out-Flush("$((if(-not [Console]::IsInputRedirected){"`e[?1006l`e[?1003l`e[?1000l"}else{""}))`e[?2004l`e[?1049l`e[?25h`e[0m")
+    if ($script:isUnix -and $script:oldStty -and -not [Console]::IsInputRedirected) {
+      try { stty $script:oldStty 2>/dev/null } catch {}
+    }
+    # Disable bracketed paste mode before handing the terminal back.
+    Out-Flush("`e[?2004l`e[?1049l`e[?25h`e[0m")
     Write-Host 'babae: session ended.' -ForegroundColor Cyan
+    if ($state.FilePath) { Write-Host "File : $($state.FilePath)" -ForegroundColor DarkGray }
   }
 }
 
