@@ -39,11 +39,7 @@ Its primary reason for existence: most terminal editors misbehave when pasting i
 
 ## Key Features
 
-
 - **Zero Dependencies**: One file. `pwsh ./babae.ps1`. Done.
-- **High Performance**: $O(\log n)$ logical line lookups via a line-start index rebuilt only at mutation chokepoints. Handles large files with zero cursor lag.
-- **Live Diagnostic Pane**: Toggleable real-time event log with `^D`. Includes a 200-entry ring buffer and drag-to-resize support.
-
 - **SSH-Safe Paste**: Bracketed paste mode (BPM) support across both interactive and redirected stdin paths. Right-click paste over SSH does not staircase — ever. See [The Stairway Paste Fix](#the-stairway-paste-fix).
 - **ANSI TUI Rendering**: Low-flicker frame rendering via a shadow row buffer and direct stdout stream writes. Only changed rows are redrawn.
 - **Four Dark Themes**: babae dark, Catppuccin Mocha, Catppuccin Frappe, GitHub Dark. Cycle with `^T`.
@@ -109,12 +105,6 @@ pwsh ./babae.ps1 myfile.txt
 
 # Open with a specific theme
 pwsh ./babae.ps1 myfile.txt -Theme mocha
-# Open with Diagnostic Pane enabled
-pwsh ./babae.ps1 myfile.txt -DiagPane
-
-# Enable persistent file logging for troubleshooting
-pwsh ./babae.ps1 myfile.txt -DebugLog
-
 ```
 
 ### Keybindings
@@ -130,7 +120,6 @@ pwsh ./babae.ps1 myfile.txt -DebugLog
 | `^C` | Copy selection (or current line) |
 | `^V` | Paste from clipboard |
 | `^T` | Cycle theme |
-| `^D` | Toggle Diagnostic Pane |
 | `^H` | Help |
 | `Arrow keys` | Move cursor |
 | `Shift+Arrows` | Extend selection |
@@ -150,15 +139,6 @@ pwsh ./babae.ps1 myfile.txt -DebugLog
 | `mocha` | Catppuccin Mocha |
 | `frappe` | Catppuccin Frappe |
 | `github-dark` | GitHub Dark |
-
-
-## Diagnostics & Mouse Support
-
-babae includes a built-in diagnostic system for troubleshooting terminal behavior and input sequences.
-
-- **Toggle Pane (`^D`)**: Opens a split-screen view at the bottom of the editor showing the last 200 internal events (input sequences, clipboard actions, etc.).
-- **Resize via Mouse**: When the diagnostic pane is visible, you can click and drag the divider line (the one labeled `DIAG`) to resize the viewport.
-- **File Logging (`-DebugLog`)**: When launched with the `-DebugLog` switch, all diagnostic events are also mirrored to `babae-debug.log` in the current directory.
 
 ## Language Detection
 
