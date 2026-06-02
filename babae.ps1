@@ -832,7 +832,6 @@ $state = [PSCustomObject]@{
   Cursor       = 0
   PreferredCol = 0
   ScrollRow    = 0
-  HScroll      = 0
   FilePath     = ''
   Language     = 'Plain Text'
   Dirty        = $false
@@ -924,7 +923,7 @@ function SelBounds {
 
 function State-Reset {
   BufSet ''
-  $state.Cursor = 0; $state.PreferredCol = 0; $state.ScrollRow = 0; $state.HScroll = 0
+  $state.Cursor = 0; $state.PreferredCol = 0; $state.ScrollRow = 0
   $state.FilePath = ''; $state.Language = 'Plain Text'
   $state.Dirty = $false; $state.Message = ''; $state.LastSearch = ''
   $state.UndoStack.Clear(); $state.RedoStack.Clear()
@@ -939,7 +938,7 @@ function State-LoadFile([string]$path) {
     [IO.File]::ReadAllText($path) -replace "`r`n", "`n" -replace "`r", "`n"
   } else { '' }
   BufSet $raw
-  $state.Cursor = 0; $state.PreferredCol = 0; $state.ScrollRow = 0; $state.HScroll = 0
+  $state.Cursor = 0; $state.PreferredCol = 0; $state.ScrollRow = 0
 }
 
 function State-SaveFile {
@@ -983,7 +982,7 @@ function State-Apply([object]$snap, [System.Collections.Generic.Stack[object]]$t
   BufSet $snap.Buf
   $state.Cursor = [Math]::Min($snap.Cursor, (BufLen))
   $state.PreferredCol = $snap.PCol
-  $state.ScrollRow = 0; $state.HScroll = 0
+  $state.ScrollRow = 0
   $state.Dirty = $true
   Reset-RenderShadow
 }
@@ -1030,26 +1029,11 @@ function Paste-Text([string]$text) {
 
 function Clamp-Cursor { ClampCursor }
 
-function Update-HScroll {
-  $width = [Console]::WindowWidth
-  $viewWidth = $width - 7 # 5 for gutter, 2 for markers
-  if ($viewWidth -lt 1) { $viewWidth = 1 }
-  $curCol = (OffsetToRowCol $state.Cursor)[1]
-
-  if ($curCol -lt $state.HScroll) {
-    $state.HScroll = $curCol
-  } elseif ($curCol -ge $state.HScroll + $viewWidth) {
-    $state.HScroll = $curCol - $viewWidth + 1
-  }
-  if ($state.HScroll -lt 0) { $state.HScroll = 0 }
-}
-
 function Update-Scroll {
   $height = [Console]::WindowHeight - 2
   $curRow = (OffsetToRowCol $state.Cursor)[0]
   if ($curRow -lt $state.ScrollRow) { $state.ScrollRow = $curRow }
   elseif ($curRow -ge $state.ScrollRow + $height) { $state.ScrollRow = $curRow - $height + 1 }
-  Update-HScroll
 }
 
 function Move-To([int]$r, [int]$c) { "`e[$r;${c}H" }
@@ -1112,39 +1096,25 @@ function Build-EditorRow([int]$rowIndex, [int]$screenWidth, [int]$textWidth) {
     "$(T 'bgGutter')$(T 'fgLineNum')$lineNumber$RESET$(T 'bgGutter') $RESET"
   }
 
-  $viewWidth = $textWidth - 2
-  $hScroll = $state.HScroll
+  $slice = if ($lineText.Length -gt $textWidth) { $lineText.Substring(0, $textWidth) } else { $lineText }
+  $slice = $slice -replace [char]0x1B, '?'
   $bg = if ($isCurrent) { T 'bgLine' } else { T 'bg' }
-
-  $leftMarker  = if ($hScroll -gt 0) { '‹' } else { ' ' }
-  $rightMarker = if ($lineText.Length -gt $hScroll + $viewWidth) { '›' } else { ' ' }
 
   $lineOffset = RowColToOffset $lineIdx 0
   $lineEndOff = $lineOffset + $lineText.Length
   $rulerCol = if ($script:ec.max_line_length -gt 0) { $script:ec.max_line_length } else { -1 }
   $lineInSel = $state.SelActive -and ($selA -lt $lineEndOff) -and ($selB -gt $lineOffset)
 
-  $rulerInView = $rulerCol -ge $hScroll -and $rulerCol -lt ($hScroll + $viewWidth)
-
-  if (-not $lineInSel -and -not $rulerInView) {
-    $visible = if ($lineText.Length -gt $hScroll) {
-      $lineText.Substring($hScroll, [Math]::Min($viewWidth, $lineText.Length - $hScroll))
-    } else { '' }
-    $visible = $visible -replace [char]0x1B, '?'
-    $pad = [Math]::Max(0, $viewWidth - $visible.Length)
-    return "$gutter$bg$(T 'fgMuted')$leftMarker$(T 'fgNorm')$visible$(' ' * $pad)$(T 'fgMuted')$rightMarker$RESET"
+  if (-not $lineInSel -and ($rulerCol -lt 0 -or $rulerCol -ge $textWidth)) {
+    $pad = [Math]::Max(0, $textWidth - $slice.Length)
+    return "$gutter$bg$(T 'fgNorm')$slice$(' ' * $pad)$RESET"
   }
 
   $sb = [System.Text.StringBuilder]::new()
   [void]$sb.Append($gutter); [void]$sb.Append($bg)
-  [void]$sb.Append($(T 'fgMuted')); [void]$sb.Append($leftMarker); [void]$sb.Append($(T 'fgNorm'))
-  for ($vi = 0; $vi -lt $viewWidth; $vi++) {
-    $ci = $vi + $hScroll
+  for ($ci = 0; $ci -lt $textWidth; $ci++) {
     $absOff = $lineOffset + $ci
-    $ch = if ($ci -lt $lineText.Length) {
-      $c = $lineText[$ci]
-      if ([int]$c -eq 0x1B) { '?' } else { [string]$c }
-    } else { ' ' }
+    $ch = if ($ci -lt $slice.Length) { [string]$slice[$ci] } else { ' ' }
     $inSel = $state.SelActive -and $absOff -ge $selA -and $absOff -lt $selB
     if ($inSel) {
       [void]$sb.Append("$(T 'bgSel')$(T 'fgSel')$ch$bg$(T 'fgNorm')")
@@ -1154,7 +1124,6 @@ function Build-EditorRow([int]$rowIndex, [int]$screenWidth, [int]$textWidth) {
       [void]$sb.Append($ch)
     }
   }
-  [void]$sb.Append($(T 'fgMuted')); [void]$sb.Append($rightMarker)
   [void]$sb.Append($RESET)
   $sb.ToString()
 }
@@ -1189,7 +1158,7 @@ function Render-Frame {
   # Cursor screen position derived from buffer offset
   $cr, $cc = OffsetToRowCol $state.Cursor
   $screenRow = $cr - $state.ScrollRow + 2
-  $screenCol = $cc - $state.HScroll + 7
+  $screenCol = $cc + 6
   if ($screenRow -ne $script:lastCursorRow -or $screenCol -ne $script:lastCursorCol) {
     [void]$dirty.Append((Move-To $screenRow $screenCol))
     $script:lastCursorRow = $screenRow
@@ -1241,7 +1210,7 @@ function Show-Help {
     [void]$sb.Append("$(T 'bgLine')$(T 'fgNorm')$text$(' ' * $pad)$RESET")
   }
   $cr, $cc = OffsetToRowCol $state.Cursor
-  [void]$sb.Append((Move-To ($cr - $state.ScrollRow + 2) ($cc - $state.HScroll + 7)))
+  [void]$sb.Append((Move-To ($cr - $state.ScrollRow + 2) ($cc + 6)))
   [void]$sb.Append("`e[?25h")
   Out-Flush($sb.ToString())
   Read-NextInputEvent | Out-Null  # consume one event to close the help dialog
