@@ -783,7 +783,7 @@ $script:commandBindingDefinitions = @(
   [PSCustomObject]@{ Key = '^A'; Label = 'Select all' }
   [PSCustomObject]@{ Key = '^C'; Label = 'Copy' }
   [PSCustomObject]@{ Key = '^V'; Label = 'Paste' }
-  [PSCustomObject]@{ Key = '^F1'; Label = 'Help' }
+  [PSCustomObject]@{ Key = '^G'; Label = 'Help' }
 )
 
 function Convert-EditorConfigGlobToRegex([string]$glob) {
@@ -1105,7 +1105,7 @@ function Build-EditorRowContent([int]$rowIndex, [int]$screenWidth, [int]$textWid
       $pad = [Math]::Max(0, $screenWidth - $plain.Length)
       return "$(Get-ThemeColor 'backgroundStatusBar')$(Get-ThemeColor 'foregroundAccent')${BOLD_SEQUENCE} Search:$RESET_SEQUENCE$(Get-ThemeColor 'backgroundStatusBar')$(Get-ThemeColor 'foregroundNormal') $($editorState.SearchBuffer)_ $(Get-ThemeColor 'foregroundMuted')(Enter=jump Esc=cancel)$(' ' * $pad)$RESET_SEQUENCE"
     }
-    $barCmds = $script:commandBindingDefinitions | Where-Object { $_.Key -in '^T', '^S', '^Q', '^F', '^Z', '^H' }
+    $barCmds = $script:commandBindingDefinitions | Where-Object { $_.Key -in '^T', '^S', '^Q', '^F', '^Z', '^G' }
     $leftPlain = ' ' + (($barCmds | ForEach-Object { "$($_.Key) $($_.Label)" }) -join ' ') + ' '
     $rightPlain = " $eol | $ecHint |$pos"
     if ($msg) { $rightPlain = " $msg |" + $rightPlain }
@@ -1302,6 +1302,7 @@ function Handle-EditingKey([ConsoleKeyInfo]$ki) {
       'C' { $selected = Get-SelectedText; if ([string]::IsNullOrEmpty($selected)) { $selected = Get-LineByNumber (Convert-OffsetToRowCol $editorState.CursorOffset)[0] }; Set-ClipboardContent $selected; $editorState.StatusMessage = ' Copied to clipboard '; return }
       'V' { Paste-TextFromClipboard (Get-ClipboardContent); return }
       'F1' { Show-HelpDialog; return }
+      'G' { Show-HelpDialog; return }
     }
     return
   }
