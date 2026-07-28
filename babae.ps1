@@ -1577,6 +1577,21 @@ function Start-BabaeEditor {
 
       # if (-not (Test-InputDataAvailable)) { Start-Sleep -Milliseconds $script:frameDelayMilliseconds; continue }
 
+      # Check if there's a burst of input (likely a paste)
+      if ($script:pendingByteQueue.Count -gt 0) {
+          Drain-OsPipeBuffers
+          if ($script:pendingByteQueue.Count -gt 8) {
+              $pasteText = Read-AllAvailableText
+              if ($pasteText) {
+                  $pasteText = $pasteText -replace "`e\[200~" -replace "`e\[201~"
+                  Paste-TextFromClipboard $pasteText
+                  Update-ScrollPosition
+                  Render-EditorFrame
+                  continue
+              }
+          }
+      }
+
       $ev = Read-InputEvent
       if ($ev.Kind -eq 'Paste') { Paste-TextFromClipboard $ev.Text }
       else {
