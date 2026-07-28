@@ -282,31 +282,59 @@ function Drain-OsPipeBuffers {
     if ($bytesRead -le 0) { break }
   }
 }
+function Read-AllAvailableText {
+  # Complete any existing async read and discard its result
+  if ($null -ne $script:currentReadTask) {
+    if ($script:currentReadTask.IsCompleted) {
+      [void]$script:currentReadTask.GetAwaiter().GetResult()
+    }
+    $script:currentReadTask = $null   # force a fresh start next time
+  }
+
+  # Drain OS buffers into our queue
+  Drain-OsPipeBuffers
+
+  # Wait up to 15 ms for any late‑arriving data
+  $deadline = [System.Diagnostics.Stopwatch]::StartNew()
+  while ($deadline.ElapsedMilliseconds -lt 15) {
+    Start-AsyncInputRead
+    if ($script:currentReadTask.Wait(5)) {
+      $read = Complete-AsyncInputRead
+      if ($read -le 0) { break }
+    } else { break }
+  }
+
+  # Now collect everything
+  Drain-OsPipeBuffers
+  $count = $script:pendingByteQueue.Count
+  if ($count -eq 0) { return [string]::Empty }
+
+  $allBytes = [byte[]]::new($count)
+  $script:pendingByteQueue.CopyTo($allBytes, 0)
+  $script:pendingByteQueue.Clear()
+
+  # Clean up after ourselves
+  if ($null -ne $script:currentReadTask) {
+    if ($script:currentReadTask.IsCompleted) {
+      [void]$script:currentReadTask.GetAwaiter().GetResult()
+    }
+    $script:currentReadTask = $null
+  }
+
+  $text = [System.Text.Encoding]::UTF8.GetString($allBytes)
+  return $text
+}
 
 function Read-PastedText {
-    # Grab everything already in the OS buffers and our internal queue
-    Drain-OsPipeBuffers
+  Drain-OsPipeBuffers
+  $count = $script:pendingByteQueue.Count
+  if ($count -eq 0) { return [string]::Empty }
 
-    # If there's nothing, just return empty
-    if ($script:pendingByteQueue.Count -eq 0) {
-        return [string]::Empty
-    }
-
-    # Drain all available bytes into a byte array
-    $allBytes = [byte[]]::new($script:pendingByteQueue.Count)
-    $script:pendingByteQueue.CopyTo($allBytes, 0)
-    $script:pendingByteQueue.Clear()
-
-    # Convert to text (UTF‑8 encoded stream)
-    $text = [System.Text.Encoding]::UTF8.GetString($allBytes)
-
-    # Strip the bracketed‑paste terminator if it's at the end
-    $term = "`e[201~"   # ␛[201~
-    if ($text.EndsWith($term)) {
-        $text = $text.Substring(0, $text.Length - $term.Length)
-    }
-
-    return $text
+  $allBytes = [byte[]]::new($count)
+  $script:pendingByteQueue.CopyTo($allBytes, 0)
+  $script:pendingByteQueue.Clear()
+  $text = [System.Text.Encoding]::UTF8.GetString($allBytes) -replace "`r", ""
+  return $text
 }
 
 function Build-ConsoleKeyInfo([char]$ch, [System.ConsoleKey]$key, [System.ConsoleModifiers]$modifiers) {
@@ -332,6 +360,8 @@ function Parse-EscapeSequence([string]$sequence) {
       '6~' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::PageDown)   0 }
       '2~' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::Insert)     0 }
       '3~' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::Delete)     0 }
+      '11~' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::F1)         0 }
+      '11;5~' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::F1)         ([System.ConsoleModifiers]::Control) }
       '1;2A' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::UpArrow)    ([System.ConsoleModifiers]::Shift) }
       '1;2B' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::DownArrow)  ([System.ConsoleModifiers]::Shift) }
       '1;2C' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::RightArrow) ([System.ConsoleModifiers]::Shift) }
@@ -356,6 +386,7 @@ function Parse-EscapeSequence([string]$sequence) {
       'D' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::LeftArrow)  0 }
       'H' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::Home)       0 }
       'F' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::End)        0 }
+      'P' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::F1)         0 }
     }
   }
   return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::NoName) 0
@@ -366,8 +397,9 @@ function Read-InputEvent {
   if ($firstByte -eq -1) {
     return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]17) ([System.ConsoleKey]::Q) ([System.ConsoleModifiers]::Control)) }
   }
+
   if ($firstByte -eq 27) {
-    # ESC
+    # Escape – wait a moment for the rest of the sequence
     Drain-OsPipeBuffers
     if ($script:pendingByteQueue.Count -eq 0) {
       $w = 0
@@ -379,6 +411,7 @@ function Read-InputEvent {
     if ($script:pendingByteQueue.Count -eq 0) {
       return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]27) ([System.ConsoleKey]::Escape) 0) }
     }
+
     $seqBuilder = [System.Text.StringBuilder]::new()
     $maxSeqLen = 12
     while ($script:pendingByteQueue.Count -gt 0 -and $seqBuilder.Length -lt $maxSeqLen) {
@@ -388,18 +421,26 @@ function Read-InputEvent {
       [void]$seqBuilder.Append($nc)
       $script:pendingByteQueue.Dequeue() | Out-Null
       $seq = $seqBuilder.ToString()
+
+      # Bracketed paste?
       if ($seq -eq '[200~') {
         $paste = Read-PastedText
         return [PSCustomObject]@{ Kind = 'Paste'; Text = $paste }
       }
+
+      # Known key sequence?
       $ki = Parse-EscapeSequence $seq
       if ($ki.Key -ne [System.ConsoleKey]::NoName) {
         return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = $ki }
       }
+
+      # Can this sequence continue? ([ or O followed by digits/semicolons)
       $couldContinue = ($seq.Length -eq 1 -and ($seq -eq '[' -or $seq -eq 'O')) `
         -or ($seq.Length -gt 1 -and $seq[0] -eq '[' -and ($nc -match '[0-9;]'))
       if (-not $couldContinue) { break }
     }
+
+    # Unknown / incomplete sequence – return as raw Escape
     $seqStr = $seqBuilder.ToString()
     $raw = [System.Text.Encoding]::UTF8.GetBytes($seqStr)
     $tmpQueue = [System.Collections.Generic.Queue[byte]]::new()
@@ -408,13 +449,14 @@ function Read-InputEvent {
     $script:pendingByteQueue = $tmpQueue
     return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]27) ([System.ConsoleKey]::Escape) 0) }
   }
+
+  # Normal byte handling (Ctrl keys, Enter, Backspace, etc.)
   switch ($firstByte) {
     0 { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]0)  ([System.ConsoleKey]::D2)        ([System.ConsoleModifiers]::Control)) } }
     13 { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]13) ([System.ConsoleKey]::Enter)     0) } }
     127 { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
-    8 { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]8)  ([System.ConsoleKey]::H)         ([System.ConsoleModifiers]::Control)) } }
+    8 { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]8)   ([System.ConsoleKey]::Backspace) 0) } }
     9 { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]9)  ([System.ConsoleKey]::Tab)       0) } }
-    27 {}
     28 { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]28) ([System.ConsoleKey]::D4)        ([System.ConsoleModifiers]::Control)) } }
     29 { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]29) ([System.ConsoleKey]::D5)        ([System.ConsoleModifiers]::Control)) } }
     30 { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]30) ([System.ConsoleKey]::D6)        ([System.ConsoleModifiers]::Control)) } }
@@ -427,6 +469,7 @@ function Read-InputEvent {
       }
     }
   }
+
   # UTF-8 multi-byte
   [byte[]]$utf8Bytes = @($firstByte)
   if ($firstByte -ge 0xC0) {
@@ -693,6 +736,7 @@ function Paste-TextFromClipboard([string]$text) {
   Push-UndoSnapshot
   if ($editorState.IsSelectionActive) { Remove-SelectedText }
   $norm = $text -replace "`r`n", "`n" -replace "`r", "`n"
+  $norm = $norm -replace "`e\[200~" -replace "`e\[201~"
   $t = Get-BufferText
   Set-BufferContent ($t.Substring(0, $editorState.CursorOffset) + $norm + $t.Substring($editorState.CursorOffset))
   $editorState.CursorOffset += $norm.Length
@@ -739,7 +783,7 @@ $script:commandBindingDefinitions = @(
   [PSCustomObject]@{ Key = '^A'; Label = 'Select all' }
   [PSCustomObject]@{ Key = '^C'; Label = 'Copy' }
   [PSCustomObject]@{ Key = '^V'; Label = 'Paste' }
-  [PSCustomObject]@{ Key = '^H'; Label = 'Help' }
+  [PSCustomObject]@{ Key = '^F1'; Label = 'Help' }
 )
 
 function Convert-EditorConfigGlobToRegex([string]$glob) {
@@ -1257,7 +1301,7 @@ function Handle-EditingKey([ConsoleKeyInfo]$ki) {
       'A' { $editorState.IsSelectionActive = $true; $editorState.SelectionAnchor = 0; $editorState.CursorOffset = $editorState.TextBuffer.Length; $editorState.PreferredColumn = (Convert-OffsetToRowCol $editorState.CursorOffset)[1]; return }
       'C' { $selected = Get-SelectedText; if ([string]::IsNullOrEmpty($selected)) { $selected = Get-LineByNumber (Convert-OffsetToRowCol $editorState.CursorOffset)[0] }; Set-ClipboardContent $selected; $editorState.StatusMessage = ' Copied to clipboard '; return }
       'V' { Paste-TextFromClipboard (Get-ClipboardContent); return }
-      'H' { Show-HelpDialog; return }
+      'F1' { Show-HelpDialog; return }
     }
     return
   }
@@ -1505,6 +1549,11 @@ function Start-BabaeEditor {
     $newMode = ($mode -band (-bnot ([ConsoleRaw]::ENABLE_ECHO_INPUT -bor [ConsoleRaw]::ENABLE_LINE_INPUT -bor [ConsoleRaw]::ENABLE_PROCESSED_INPUT -bor [ConsoleRaw]::ENABLE_QUICK_EDIT_MODE))) `
       -bor [ConsoleRaw]::ENABLE_MOUSE_INPUT -bor [ConsoleRaw]::ENABLE_EXTENDED_FLAGS
     [ConsoleRaw]::SetConsoleMode($handle, $newMode)
+    # DEBUG: read back the mode to verify
+    [uint]$modeCheck = 0
+    [ConsoleRaw]::GetConsoleMode($handle, [ref]$modeCheck)
+    Write-Host "Raw mode set. Mode before: $script:originalConsoleMode, after: $modeCheck" -ForegroundColor Green
+    Start-Sleep -Seconds 2
   }
 
   Write-OutputBuffer("`e[?1049h`e[?2004h`e[?25l`e[2J`e[3J`e[H")
@@ -1526,7 +1575,7 @@ function Start-BabaeEditor {
 
       Render-EditorFrame
 
-      if (-not (Test-InputDataAvailable)) { Start-Sleep -Milliseconds $script:frameDelayMilliseconds; continue }
+      # if (-not (Test-InputDataAvailable)) { Start-Sleep -Milliseconds $script:frameDelayMilliseconds; continue }
 
       $ev = Read-InputEvent
       if ($ev.Kind -eq 'Paste') { Paste-TextFromClipboard $ev.Text }
@@ -1539,6 +1588,14 @@ function Start-BabaeEditor {
       Clamp-CursorOffset
     }
   } finally {
+    # Restore original console mode on Windows
+    if ($IsWindows -or $env:OS -eq 'Windows_NT') {
+      if ($script:originalConsoleMode) {
+        $handle = [ConsoleRaw]::GetStdHandle([ConsoleRaw]::STD_INPUT_HANDLE)
+        [ConsoleRaw]::SetConsoleMode($handle, $script:originalConsoleMode)
+      }
+    }
+    # Restore original stty settings on Unix
     if ($script:isUnixPlatform -and $script:originalSttySettings -and -not [Console]::IsInputRedirected) {
       try { stty $script:originalSttySettings 2>/dev/null } catch {}
     }
