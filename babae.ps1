@@ -81,7 +81,7 @@ $ErrorActionPreference = "Stop"
 $script:frameDelayMilliseconds = 16
 
 # ---------------------------------------------------------------------------
-# Themes – built from a base template to eliminate duplication
+# Themes - built from a base template to eliminate duplication
 # ---------------------------------------------------------------------------
 $script:baseTheme = @{
   background                  = "48;2;17;15;26"
@@ -221,8 +221,12 @@ function Get-ThemeColor([string]$key) {
   $currentTheme = $script:themeDefinitions[$script:availableThemeNames[$script:currentThemeIndex]]
   return "`e[$($currentTheme[$key])m"
 }
-$RESET_SEQUENCE = "`e[0m"
-$BOLD_SEQUENCE = "`e[1m"
+$script:RESET_SEQUENCE = "`e[0m"
+# $script:BOLD_SEQUENCE = "`e[1m"
+
+$script:SEQ_MOUSE_TRACKING_OFF = "`e[?1000l`e[?1002l`e[?1003l"
+$script:SEQ_AUTOWRAP_OFF = "`e[?7l"
+$script:SEQ_AUTOWRAP_ON = "`e[?7h"
 
 # ---------------------------------------------------------------------------
 # Output & Input infrastructure
@@ -283,18 +287,15 @@ function Drain-OsPipeBuffers {
   }
 }
 function Read-AllAvailableText {
-  # Complete any existing async read and discard its result
   if ($null -ne $script:currentReadTask) {
     if ($script:currentReadTask.IsCompleted) {
       [void]$script:currentReadTask.GetAwaiter().GetResult()
     }
-    $script:currentReadTask = $null   # force a fresh start next time
+    $script:currentReadTask = $null
   }
 
-  # Drain OS buffers into our queue
   Drain-OsPipeBuffers
 
-  # Wait up to 15 ms for any late‑arriving data
   $deadline = [System.Diagnostics.Stopwatch]::StartNew()
   while ($deadline.ElapsedMilliseconds -lt 15) {
     Start-AsyncInputRead
@@ -304,7 +305,6 @@ function Read-AllAvailableText {
     } else { break }
   }
 
-  # Now collect everything
   Drain-OsPipeBuffers
   $count = $script:pendingByteQueue.Count
   if ($count -eq 0) { return [string]::Empty }
@@ -313,7 +313,6 @@ function Read-AllAvailableText {
   $script:pendingByteQueue.CopyTo($allBytes, 0)
   $script:pendingByteQueue.Clear()
 
-  # Clean up after ourselves
   if ($null -ne $script:currentReadTask) {
     if ($script:currentReadTask.IsCompleted) {
       [void]$script:currentReadTask.GetAwaiter().GetResult()
@@ -333,7 +332,7 @@ function Read-PastedText {
   $allBytes = [byte[]]::new($count)
   $script:pendingByteQueue.CopyTo($allBytes, 0)
   $script:pendingByteQueue.Clear()
-  $text = [System.Text.Encoding]::UTF8.GetString($allBytes) -replace "`r", ""
+  $text = [System.Text.Encoding]::UTF8.GetString($allBytes) -replace "`r`n", "`n" -replace "`r", "`n"
   return $text
 }
 
@@ -360,12 +359,13 @@ function Parse-EscapeSequence([string]$sequence) {
       '6~' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::PageDown)   0 }
       '2~' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::Insert)     0 }
       '3~' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::Delete)     0 }
-      '11~' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::F1)         0 }
-      '11;5~' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::F1)         ([System.ConsoleModifiers]::Control) }
       '1;2A' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::UpArrow)    ([System.ConsoleModifiers]::Shift) }
       '1;2B' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::DownArrow)  ([System.ConsoleModifiers]::Shift) }
       '1;2C' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::RightArrow) ([System.ConsoleModifiers]::Shift) }
       '1;2D' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::LeftArrow)  ([System.ConsoleModifiers]::Shift) }
+      '1;2H' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::Home)       ([System.ConsoleModifiers]::Shift) }
+      '1;2F' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::End)        ([System.ConsoleModifiers]::Shift) }
+      '1;5P' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::F1) ([System.ConsoleModifiers]::Control) }
       '49;5u' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::D1) ([System.ConsoleModifiers]::Control) }
       '50;5u' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::D2) ([System.ConsoleModifiers]::Control) }
       '51;5u' { return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::D3) ([System.ConsoleModifiers]::Control) }
@@ -392,14 +392,17 @@ function Parse-EscapeSequence([string]$sequence) {
   return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::NoName) 0
 }
 
+# --- FIX #3: escape-sequence reassembly now actively waits for late-arriving
+#     bytes instead of abandoning a partial sequence the instant the queue
+#     empties. This is what was causing dead arrow keys over SSH / laggy pipes,
+#     per https://learn.microsoft.com/en-us/windows/console/classic-vs-vt
 function Read-InputEvent {
   $firstByte = Read-ByteFromInput
   if ($firstByte -eq -1) {
-    return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]17) ([System.ConsoleKey]::Q) ([System.ConsoleModifiers]::Control)) }
+    return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::NoName) 0) }
   }
 
   if ($firstByte -eq 27) {
-    # Escape – wait a moment for the rest of the sequence
     Drain-OsPipeBuffers
     if ($script:pendingByteQueue.Count -eq 0) {
       $w = 0
@@ -411,10 +414,19 @@ function Read-InputEvent {
     if ($script:pendingByteQueue.Count -eq 0) {
       return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]27) ([System.ConsoleKey]::Escape) 0) }
     }
-
     $seqBuilder = [System.Text.StringBuilder]::new()
-    $maxSeqLen = 12
-    while ($script:pendingByteQueue.Count -gt 0 -and $seqBuilder.Length -lt $maxSeqLen) {
+    $maxSeqLen = 24   # widened slightly to comfortably fit SGR mouse reports
+    $maxWaitIterations = 40
+    while ($seqBuilder.Length -lt $maxSeqLen) {
+      if ($script:pendingByteQueue.Count -eq 0) {
+        $waited = 0
+        while ($script:pendingByteQueue.Count -eq 0 -and $waited -lt $maxWaitIterations) {
+          Start-Sleep -Milliseconds 2
+          Drain-OsPipeBuffers
+          $waited++
+        }
+        if ($script:pendingByteQueue.Count -eq 0) { break }
+      }
       $nb = $script:pendingByteQueue.Peek()
       if ($nb -eq 27) { break }
       $nc = [char]$nb
@@ -422,41 +434,53 @@ function Read-InputEvent {
       $script:pendingByteQueue.Dequeue() | Out-Null
       $seq = $seqBuilder.ToString()
 
-      # Bracketed paste?
       if ($seq -eq '[200~') {
         $paste = Read-PastedText
         return [PSCustomObject]@{ Kind = 'Paste'; Text = $paste }
       }
 
-      # Known key sequence?
+      # SGR mouse report: ESC [ < params M-or-m — babae has no mouse handling, discard silently
+      if ($seq -match '^\[<[0-9;]+[Mm]$') {
+        return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::NoName) 0) }
+      }
+
       $ki = Parse-EscapeSequence $seq
       if ($ki.Key -ne [System.ConsoleKey]::NoName) {
         return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = $ki }
       }
 
-      # Can this sequence continue? ([ or O followed by digits/semicolons)
       $couldContinue = ($seq.Length -eq 1 -and ($seq -eq '[' -or $seq -eq 'O')) `
-        -or ($seq.Length -gt 1 -and $seq[0] -eq '[' -and ($nc -match '[0-9;]'))
+        -or ($seq.Length -eq 2 -and $seq -eq '[<') `
+        -or ($seq.Length -gt 2 -and $seq.StartsWith('[<') -and ($nc -match '[0-9;Mm]')) `
+        -or ($seq.Length -gt 1 -and $seq[0] -eq '[' -and -not $seq.StartsWith('[<') -and ($nc -match '[0-9;]'))
       if (-not $couldContinue) { break }
     }
-
-    # Unknown / incomplete sequence – return as raw Escape
     $seqStr = $seqBuilder.ToString()
-    $raw = [System.Text.Encoding]::UTF8.GetBytes($seqStr)
-    $tmpQueue = [System.Collections.Generic.Queue[byte]]::new()
-    foreach ($b in $raw) { $tmpQueue.Enqueue($b) }
-    foreach ($b in $script:pendingByteQueue) { $tmpQueue.Enqueue($b) }
-    $script:pendingByteQueue = $tmpQueue
+    if ($script:debugMode) {
+      $raw = [System.Text.Encoding]::UTF8.GetBytes($seqStr)
+      $tmpQueue = [System.Collections.Generic.Queue[byte]]::new()
+      foreach ($b in $raw) { $tmpQueue.Enqueue($b) }
+      foreach ($b in $script:pendingByteQueue) { $tmpQueue.Enqueue($b) }
+      $script:pendingByteQueue = $tmpQueue
+    }
     return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]27) ([System.ConsoleKey]::Escape) 0) }
   }
 
-  # Normal byte handling (Ctrl keys, Enter, Backspace, etc.)
+  if ($firstByte -ge 32 -and $firstByte -le 126) {
+    Drain-OsPipeBuffers
+    if ($script:pendingByteQueue.Count -gt 8) {
+      $paste = [char]$firstByte + (Read-PastedText)
+      return [PSCustomObject]@{ Kind = 'Paste'; Text = $paste }
+    }
+  }
+
   switch ($firstByte) {
     0 { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]0)  ([System.ConsoleKey]::D2)        ([System.ConsoleModifiers]::Control)) } }
     13 { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]13) ([System.ConsoleKey]::Enter)     0) } }
     127 { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]127) ([System.ConsoleKey]::Backspace) 0) } }
     8 { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]8)   ([System.ConsoleKey]::Backspace) 0) } }
     9 { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]9)  ([System.ConsoleKey]::Tab)       0) } }
+    27 { }
     28 { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]28) ([System.ConsoleKey]::D4)        ([System.ConsoleModifiers]::Control)) } }
     29 { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]29) ([System.ConsoleKey]::D5)        ([System.ConsoleModifiers]::Control)) } }
     30 { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]30) ([System.ConsoleKey]::D6)        ([System.ConsoleModifiers]::Control)) } }
@@ -470,7 +494,6 @@ function Read-InputEvent {
     }
   }
 
-  # UTF-8 multi-byte
   [byte[]]$utf8Bytes = @($firstByte)
   if ($firstByte -ge 0xC0) {
     $extra = if ($firstByte -ge 0xF0) { 3 } elseif ($firstByte -ge 0xE0) { 2 } else { 1 }
@@ -484,7 +507,6 @@ function Read-InputEvent {
 $script:cachedRenderRows = [System.Collections.Generic.List[string]]::new()
 $script:cachedCursorRow = -1
 $script:cachedCursorColumn = -1
-$script:cachedCursorVisible = $false
 
 function Write-OutputBuffer([string]$text) {
   $script:outputWriter.Write($text)
@@ -494,7 +516,6 @@ function Clear-RenderCache {
   $script:cachedRenderRows.Clear()
   $script:cachedCursorRow = -1
   $script:cachedCursorColumn = -1
-  $script:cachedCursorVisible = $false
 }
 
 # ---------------------------------------------------------------------------
@@ -557,6 +578,7 @@ $editorState = [PSCustomObject]@{
   UndoStack              = [System.Collections.Generic.Stack[object]]::new()
   RedoStack              = [System.Collections.Generic.Stack[object]]::new()
   EditorMode             = 'edit'
+  SaveAsBuffer           = ''
   SearchBuffer           = ''
   IsSelectionActive      = $false
   SelectionAnchor        = 0
@@ -731,12 +753,13 @@ function Start-Selection {
   }
 }
 
+# --- FIX #1: bracketed-paste markers now stripped with explicit replacement args
 function Paste-TextFromClipboard([string]$text) {
   if ([string]::IsNullOrEmpty($text)) { $editorState.StatusMessage = ' Clipboard empty '; return }
   Push-UndoSnapshot
   if ($editorState.IsSelectionActive) { Remove-SelectedText }
   $norm = $text -replace "`r`n", "`n" -replace "`r", "`n"
-  $norm = $norm -replace "`e\[200~" -replace "`e\[201~"
+  $norm = $norm -replace "`e\[200~", '' -replace "`e\[201~", ''
   $t = Get-BufferText
   Set-BufferContent ($t.Substring(0, $editorState.CursorOffset) + $norm + $t.Substring($editorState.CursorOffset))
   $editorState.CursorOffset += $norm.Length
@@ -746,11 +769,15 @@ function Paste-TextFromClipboard([string]$text) {
 }
 
 function Update-ScrollPosition {
+  # Vertical scroll
   $height = [Console]::WindowHeight - 2
+  if ($height -lt 1) { $height = 1 }
   $cursorRow = (Convert-OffsetToRowCol $editorState.CursorOffset)[0]
   if ($cursorRow -lt $editorState.VerticalScrollRow) { $editorState.VerticalScrollRow = $cursorRow }
-  elseif ($cursorRow -ge $editorState.VerticalScrollRow + $height) { $editorState.VerticalScrollRow = $cursorRow - $height + 1 }
+  elseif ($cursorRow -gt $editorState.VerticalScrollRow + $height - 1) { $editorState.VerticalScrollRow = $cursorRow - $height + 1 }
+  $editorState.VerticalScrollRow = [Math]::Max(0, $editorState.VerticalScrollRow)
 
+  # Horizontal scroll
   $textWidth = [Console]::WindowWidth - 5
   $cursorCol = (Convert-OffsetToRowCol $editorState.CursorOffset)[1]
   if ($cursorCol -lt $editorState.HorizontalScrollOffset) { $editorState.HorizontalScrollOffset = $cursorCol }
@@ -759,6 +786,14 @@ function Update-ScrollPosition {
 }
 
 function Move-CursorToScreenCoordinate([int]$r, [int]$c) { "`e[$r;${c}H" }
+
+# --- FIX #5 (additive): DECSTBM scroll-margin helpers
+function Set-ScrollMargins([int]$top, [int]$bottom) {
+  Write-OutputBuffer "`e[$top;${bottom}r"
+}
+function Reset-ScrollMargins() {
+  Write-OutputBuffer "`e[r"
+}
 
 # ---------------------------------------------------------------------------
 # .editorconfig (unchanged except variable name)
@@ -783,7 +818,7 @@ $script:commandBindingDefinitions = @(
   [PSCustomObject]@{ Key = '^A'; Label = 'Select all' }
   [PSCustomObject]@{ Key = '^C'; Label = 'Copy' }
   [PSCustomObject]@{ Key = '^V'; Label = 'Paste' }
-  [PSCustomObject]@{ Key = '^G'; Label = 'Help' }
+  [PSCustomObject]@{ Key = '^F1'; Label = 'Help' }
 )
 
 function Convert-EditorConfigGlobToRegex([string]$glob) {
@@ -874,7 +909,7 @@ function Get-IndentationString {
 }
 
 # ---------------------------------------------------------------------------
-# Syntax highlighting engine
+# Syntax highlighting engine (unchanged)
 # ---------------------------------------------------------------------------
 function Get-LanguageFromPath([string]$path) {
   if ([string]::IsNullOrEmpty($path)) { return 'Plain Text' }
@@ -1089,10 +1124,10 @@ function Build-EditorRowContent([int]$rowIndex, [int]$screenWidth, [int]$textWid
   if ($rowIndex -eq 0) {
     $themeName = $script:themeDefinitions[$script:availableThemeNames[$script:currentThemeIndex]].displayName
     $fileName = if ($editorState.FilePath) { [IO.Path]::GetFileName($editorState.FilePath) } else { 'new file' }
-    $dirty = if ($editorState.IsDirty) { "$(Get-ThemeColor 'foregroundDirty')●$RESET_SEQUENCE$(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundHeader') " } else { '  ' }
+    $dirty = if ($editorState.IsDirty) { "$(Get-ThemeColor 'foregroundDirty')●$script:RESET_SEQUENCE$(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundHeader') " } else { '  ' }
     $plain = " babae | $fileName [$($editorState.Language)] | $themeName "
     $pad = [Math]::Max(0, $screenWidth - $plain.Length)
-    return "$(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundHeader')${BOLD_SEQUENCE} babae $RESET_SEQUENCE$(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundMuted')| $RESET_SEQUENCE$(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundHeader')$dirty$fileName [$($editorState.Language)] $(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundMuted')| $RESET_SEQUENCE$(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundHeader')$themeName$(' ' * $pad)$RESET_SEQUENCE"
+    return "$(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundHeader')${BOLD_SEQUENCE} babae $script:RESET_SEQUENCE$(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundMuted')| $script:RESET_SEQUENCE$(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundHeader')$dirty$fileName [$($editorState.Language)] $(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundMuted')| $script:RESET_SEQUENCE$(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundHeader')$themeName$(' ' * $pad)$script:RESET_SEQUENCE"
   }
 
   if ($rowIndex -eq ([Console]::WindowHeight - 1)) {
@@ -1103,21 +1138,27 @@ function Build-EditorRowContent([int]$rowIndex, [int]$screenWidth, [int]$textWid
     if ($editorState.EditorMode -eq 'search') {
       $plain = " Search: $($editorState.SearchBuffer)_ (Enter=jump Esc=cancel) "
       $pad = [Math]::Max(0, $screenWidth - $plain.Length)
-      return "$(Get-ThemeColor 'backgroundStatusBar')$(Get-ThemeColor 'foregroundAccent')${BOLD_SEQUENCE} Search:$RESET_SEQUENCE$(Get-ThemeColor 'backgroundStatusBar')$(Get-ThemeColor 'foregroundNormal') $($editorState.SearchBuffer)_ $(Get-ThemeColor 'foregroundMuted')(Enter=jump Esc=cancel)$(' ' * $pad)$RESET_SEQUENCE"
+      return "$(Get-ThemeColor 'backgroundStatusBar')$(Get-ThemeColor 'foregroundAccent')${BOLD_SEQUENCE} Search:$script:RESET_SEQUENCE$(Get-ThemeColor 'backgroundStatusBar')$(Get-ThemeColor 'foregroundNormal') $($editorState.SearchBuffer)_ $(Get-ThemeColor 'foregroundMuted')(Enter=jump Esc=cancel)$(' ' * $pad)$script:RESET_SEQUENCE"
     }
-    $barCmds = $script:commandBindingDefinitions | Where-Object { $_.Key -in '^T', '^S', '^Q', '^F', '^Z', '^G' }
+    if ($editorState.EditorMode -eq 'save-as') {
+      $plain = " Save as: $($editorState.SaveAsBuffer) (Enter=save Esc=cancel) "
+      $pad = [Math]::Max(0, $screenWidth - $plain.Length)
+      return "$(Get-ThemeColor 'backgroundStatusBar')$(Get-ThemeColor 'foregroundAccent')${BOLD_SEQUENCE} Save as:$RESET_SEQUENCE$(Get-ThemeColor 'backgroundStatusBar')$(Get-ThemeColor 'foregroundNormal') $($editorState.SaveAsBuffer) $(Get-ThemeColor 'foregroundMuted')(Enter=save Esc=cancel)$(' ' * $pad)$RESET_SEQUENCE"
+    }
+    $displayOrder = @('^F1', '^T', '^S', '^Q', '^F', '^Z')
+    $barCmds = foreach ($k in $displayOrder) { $script:commandBindingDefinitions | Where-Object { $_.Key -eq $k } }
     $leftPlain = ' ' + (($barCmds | ForEach-Object { "$($_.Key) $($_.Label)" }) -join ' ') + ' '
     $rightPlain = " $eol | $ecHint |$pos"
     if ($msg) { $rightPlain = " $msg |" + $rightPlain }
     if ($editorState.IsSelectionActive) { $rightPlain = " SEL |" + $rightPlain }
     $pad = [Math]::Max(0, $screenWidth - $leftPlain.Length - $rightPlain.Length)
     $right = ''
-    if ($msg) { $right += "$(Get-ThemeColor 'foregroundSaved') $msg $RESET_SEQUENCE$(Get-ThemeColor 'backgroundStatusBar')$(Get-ThemeColor 'foregroundMuted')│" }
-    if ($editorState.IsSelectionActive) { $right += "$(Get-ThemeColor 'foregroundAccent') SEL $RESET_SEQUENCE$(Get-ThemeColor 'backgroundStatusBar')$(Get-ThemeColor 'foregroundMuted')│" }
-    $right += "$(Get-ThemeColor 'foregroundMuted') $eol $(Get-ThemeColor 'foregroundMuted')│ $(Get-ThemeColor 'foregroundMuted')$ecHint $(Get-ThemeColor 'foregroundMuted')│$(Get-ThemeColor 'foregroundAccent')$pos$RESET_SEQUENCE"
+    if ($msg) { $right += "$(Get-ThemeColor 'foregroundSaved') $msg $script:RESET_SEQUENCE$(Get-ThemeColor 'backgroundStatusBar')$(Get-ThemeColor 'foregroundMuted')│" }
+    if ($editorState.IsSelectionActive) { $right += "$(Get-ThemeColor 'foregroundAccent') SEL $script:RESET_SEQUENCE$(Get-ThemeColor 'backgroundStatusBar')$(Get-ThemeColor 'foregroundMuted')│" }
+    $right += "$(Get-ThemeColor 'foregroundMuted') $eol $(Get-ThemeColor 'foregroundMuted')│ $(Get-ThemeColor 'foregroundMuted')$ecHint $(Get-ThemeColor 'foregroundMuted')│$(Get-ThemeColor 'foregroundAccent')$pos$script:RESET_SEQUENCE"
     $barLeft = "$(Get-ThemeColor 'backgroundStatusBar')"
     foreach ($cmd in $barCmds) {
-      $barLeft += "$(Get-ThemeColor 'foregroundAccent')${BOLD_SEQUENCE}$($cmd.Key)$RESET_SEQUENCE$(Get-ThemeColor 'backgroundStatusBar')$(Get-ThemeColor 'foregroundMuted') $($cmd.Label) "
+      $barLeft += "$(Get-ThemeColor 'foregroundAccent')${BOLD_SEQUENCE}$($cmd.Key)$script:RESET_SEQUENCE$(Get-ThemeColor 'backgroundStatusBar')$(Get-ThemeColor 'foregroundMuted') $($cmd.Label) "
     }
     return "$barLeft$(' ' * $pad)$right"
   }
@@ -1125,15 +1166,15 @@ function Build-EditorRowContent([int]$rowIndex, [int]$screenWidth, [int]$textWid
   $lineIndex = $rowIndex - 1 + $editorState.VerticalScrollRow
   $lineText = Get-LineByNumber $lineIndex
   if ($null -eq $lineText) {
-    return "$(Get-ThemeColor 'backgroundGutter')$(Get-ThemeColor 'foregroundTilde')   ~ $RESET_SEQUENCE$(Get-ThemeColor 'background')$(' ' * $textWidth)$RESET_SEQUENCE"
+    return "$(Get-ThemeColor 'backgroundGutter')$(Get-ThemeColor 'foregroundTilde')   ~ $script:RESET_SEQUENCE$(Get-ThemeColor 'background')$(' ' * $textWidth)$script:RESET_SEQUENCE"
   }
 
   $isCurrent = ($lineIndex -eq $cursorRow)
   $lineNum = ($lineIndex + 1).ToString().PadLeft(4)
   $gutter = if ($isCurrent) {
-    "$(Get-ThemeColor 'backgroundGutter')$(Get-ThemeColor 'foregroundCurrentLineNumber')${BOLD_SEQUENCE}$lineNum$RESET_SEQUENCE$(Get-ThemeColor 'backgroundGutter') $RESET_SEQUENCE"
+    "$(Get-ThemeColor 'backgroundGutter')$(Get-ThemeColor 'foregroundCurrentLineNumber')${BOLD_SEQUENCE}$lineNum$script:RESET_SEQUENCE$(Get-ThemeColor 'backgroundGutter') $script:RESET_SEQUENCE"
   } else {
-    "$(Get-ThemeColor 'backgroundGutter')$(Get-ThemeColor 'foregroundLineNumber')$lineNum$RESET_SEQUENCE$(Get-ThemeColor 'backgroundGutter') $RESET_SEQUENCE"
+    "$(Get-ThemeColor 'backgroundGutter')$(Get-ThemeColor 'foregroundLineNumber')$lineNum$script:RESET_SEQUENCE$(Get-ThemeColor 'backgroundGutter') $script:RESET_SEQUENCE"
   }
 
   $hScroll = $editorState.HorizontalScrollOffset
@@ -1152,9 +1193,7 @@ function Build-EditorRowContent([int]$rowIndex, [int]$screenWidth, [int]$textWid
 
   $bg = if ($isCurrent) { Get-ThemeColor 'backgroundLine' } else { Get-ThemeColor 'background' }
   $lineOff = Convert-RowColToOffset $lineIndex 0
-  $lineEndOff = $lineOff + $fullLine.Length
   $rulerCol = if ($script:editorConfigSettings.max_line_length -gt 0) { $script:editorConfigSettings.max_line_length } else { -1 }
-  $lineInSel = $editorState.IsSelectionActive -and ($selStart -lt $lineEndOff) -and ($selEnd -gt $lineOff)
 
   $sb = [System.Text.StringBuilder]::new()
   [void]$sb.Append($gutter)
@@ -1182,10 +1221,12 @@ function Build-EditorRowContent([int]$rowIndex, [int]$screenWidth, [int]$textWid
       [void]$sb.Append("$(Get-ThemeColor $fgKey)$ch")
     }
   }
-  [void]$sb.Append($RESET_SEQUENCE)
+  [void]$sb.Append($script:RESET_SEQUENCE)
   return $sb.ToString()
 }
 
+# --- FIX #2: cursor hide/show now brackets every single frame (DECTCEM)
+#     instead of relying on a one-shot cache flag that never reset.
 function Render-EditorFrame {
   $width = [Console]::WindowWidth
   $height = [Console]::WindowHeight
@@ -1194,29 +1235,29 @@ function Render-EditorFrame {
   if ($script:cachedRenderRows.Count -ne $height) {
     Clear-RenderCache
     for ($i = 0; $i -lt $height; $i++) { $script:cachedRenderRows.Add('') }
-    Write-OutputBuffer("`e[2J`e[3J`e[?25l")
-    $script:cachedCursorVisible = $false
+    Write-OutputBuffer("`e[2J`e[3J")
   }
 
   $dirty = [System.Text.StringBuilder]::new()
-  if (-not $script:cachedCursorVisible) {
-    [void]$dirty.Append("`e[?25l")
-    $script:cachedCursorVisible = $true
-  }
+  [void]$dirty.Append("`e[?25l")
 
+  $anyRowChanged = $false
   for ($row = 0; $row -lt $height; $row++) {
     $rendered = Build-EditorRowContent $row $width $textWidth
     if ($script:cachedRenderRows[$row] -ne $rendered) {
       $script:cachedRenderRows[$row] = $rendered
       [void]$dirty.Append((Move-CursorToScreenCoordinate ($row + 1) 1))
       [void]$dirty.Append($rendered)
+      $anyRowChanged = $true
     }
   }
 
   $cr, $cc = Convert-OffsetToRowCol $editorState.CursorOffset
-  $screenRow = $cr - $editorState.VerticalScrollRow + 2
-  $screenCol = $cc - $editorState.HorizontalScrollOffset + 6
-  if ($screenRow -ne $script:cachedCursorRow -or $screenCol -ne $script:cachedCursorColumn) {
+  $maxTextRow = [Console]::WindowHeight - 1
+  $screenRow = [Math]::Min($maxTextRow, [Math]::Max(2, $cr - $editorState.VerticalScrollRow + 2))
+  $screenCol = [Math]::Max(6, $cc - $editorState.HorizontalScrollOffset + 6)
+
+  if ($anyRowChanged -or $screenRow -ne $script:cachedCursorRow -or $screenCol -ne $script:cachedCursorColumn) {
     [void]$dirty.Append((Move-CursorToScreenCoordinate $screenRow $screenCol))
     $script:cachedCursorRow = $screenRow
     $script:cachedCursorColumn = $screenCol
@@ -1254,12 +1295,12 @@ function Show-HelpDialog {
   for ($i = 0; $i -lt $boxH; $i++) {
     [void]$sb.Append((Move-CursorToScreenCoordinate ($top + $i) $left))
     if ($i -eq 0 -or $i -eq ($boxH - 1)) {
-      [void]$sb.Append("$(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundHeader')$(' ' * $boxW)$RESET_SEQUENCE")
+      [void]$sb.Append("$(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundHeader')$(' ' * $boxW)$script:RESET_SEQUENCE")
       continue
     }
     $text = $lines[$i - 1]
     $pad = [Math]::Max(0, $boxW - $text.Length)
-    [void]$sb.Append("$(Get-ThemeColor 'backgroundLine')$(Get-ThemeColor 'foregroundNormal')$text$(' ' * $pad)$RESET_SEQUENCE")
+    [void]$sb.Append("$(Get-ThemeColor 'backgroundLine')$(Get-ThemeColor 'foregroundNormal')$text$(' ' * $pad)$script:RESET_SEQUENCE")
   }
   $cr, $cc = Convert-OffsetToRowCol $editorState.CursorOffset
   [void]$sb.Append((Move-CursorToScreenCoordinate ($cr - $editorState.VerticalScrollRow + 2) ($cc - $editorState.HorizontalScrollOffset + 6)))
@@ -1284,16 +1325,24 @@ function Search-ForTerm([string]$term) {
   $editorState.StatusMessage = ' Found '
 }
 
+# --- FIX #4: Enter no longer carries indentation from the current line.
 function Handle-EditingKey([ConsoleKeyInfo]$ki) {
   $key = $ki.Key
   $ctrl = ($ki.Modifiers -band [ConsoleModifiers]::Control) -ne 0
   $shift = ($ki.Modifiers -band [ConsoleModifiers]::Shift) -ne 0
   $ch = $ki.KeyChar
+  $continuingShiftSelection = $shift -and $script:lastKeyWasShiftNav
+  $script:lastKeyWasShiftNav = $false
 
   if ($ctrl) {
     switch ($key) {
       'T' { $script:currentThemeIndex = ($script:currentThemeIndex + 1) % $script:availableThemeNames.Count; $editorState.StatusMessage = " Theme: $($script:themeDefinitions[$script:availableThemeNames[$script:currentThemeIndex]].displayName) "; Clear-RenderCache; return }
-      'S' { Save-EditorFile; return }
+      'S' {
+        if ([string]::IsNullOrWhiteSpace($editorState.FilePath)) {
+          $editorState.EditorMode = 'save-as'; $editorState.SaveAsBuffer = ''
+        } else { Save-EditorFile }
+        return
+      }
       'Q' { $editorState.EditorMode = 'confirm-quit'; return }
       'Z' { Undo-LastChange; return }
       'Y' { Redo-LastChange; return }
@@ -1302,7 +1351,6 @@ function Handle-EditingKey([ConsoleKeyInfo]$ki) {
       'C' { $selected = Get-SelectedText; if ([string]::IsNullOrEmpty($selected)) { $selected = Get-LineByNumber (Convert-OffsetToRowCol $editorState.CursorOffset)[0] }; Set-ClipboardContent $selected; $editorState.StatusMessage = ' Copied to clipboard '; return }
       'V' { Paste-TextFromClipboard (Get-ClipboardContent); return }
       'F1' { Show-HelpDialog; return }
-      'G' { Show-HelpDialog; return }
     }
     return
   }
@@ -1311,58 +1359,67 @@ function Handle-EditingKey([ConsoleKeyInfo]$ki) {
     'LeftArrow' {
       if ($editorState.IsSelectionActive -and -not $shift) { $editorState.CursorOffset = (Get-SelectionBoundaries)[0] }
       elseif ($editorState.CursorOffset -gt 0) {
-        if ($shift -and -not $editorState.IsSelectionActive) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
+        if ($shift -and -not $continuingShiftSelection) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
         $editorState.CursorOffset--
       }
       if (-not $shift) { $editorState.IsSelectionActive = $false }
-      $editorState.PreferredColumn = (Convert-OffsetToRowCol $editorState.CursorOffset)[1]; $editorState.AutocompleteMatches = $null; return
+      $editorState.PreferredColumn = (Convert-OffsetToRowCol $editorState.CursorOffset)[1]; $editorState.AutocompleteMatches = $null
+      if ($shift) { $script:lastKeyWasShiftNav = $true }
+      return
     }
     'RightArrow' {
       if ($editorState.IsSelectionActive -and -not $shift) { $editorState.CursorOffset = (Get-SelectionBoundaries)[1] }
       elseif ($editorState.CursorOffset -lt $editorState.TextBuffer.Length) {
-        if ($shift -and -not $editorState.IsSelectionActive) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
+        if ($shift -and -not $continuingShiftSelection) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
         $editorState.CursorOffset++
       }
       if (-not $shift) { $editorState.IsSelectionActive = $false }
-      $editorState.PreferredColumn = (Convert-OffsetToRowCol $editorState.CursorOffset)[1]; $editorState.AutocompleteMatches = $null; return
+      $editorState.PreferredColumn = (Convert-OffsetToRowCol $editorState.CursorOffset)[1]; $editorState.AutocompleteMatches = $null
+      if ($shift) { $script:lastKeyWasShiftNav = $true }
+      return
     }
     'UpArrow' {
-      if ($shift -and -not $editorState.IsSelectionActive) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
+      if ($shift -and -not $continuingShiftSelection) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
       if (-not $shift) { $editorState.IsSelectionActive = $false }
       $row = (Convert-OffsetToRowCol $editorState.CursorOffset)[0]
       if ($row -gt 0) { $editorState.CursorOffset = Convert-RowColToOffset ($row - 1) $editorState.PreferredColumn }
-      $editorState.AutocompleteMatches = $null; return
+      $editorState.AutocompleteMatches = $null
+      if ($shift) { $script:lastKeyWasShiftNav = $true }
+      return
     }
     'DownArrow' {
-      if ($shift -and -not $editorState.IsSelectionActive) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
+      if ($shift -and -not $continuingShiftSelection) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
       if (-not $shift) { $editorState.IsSelectionActive = $false }
       $row = (Convert-OffsetToRowCol $editorState.CursorOffset)[0]
       $editorState.CursorOffset = Convert-RowColToOffset ($row + 1) $editorState.PreferredColumn
-      $editorState.AutocompleteMatches = $null; return
+      $editorState.AutocompleteMatches = $null
+      if ($shift) { $script:lastKeyWasShiftNav = $true }
+      return
     }
     'Home' {
-      if ($shift -and -not $editorState.IsSelectionActive) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
+      if ($shift -and -not $continuingShiftSelection) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
       if (-not $shift) { $editorState.IsSelectionActive = $false }
-      $editorState.CursorOffset = Get-LineStartOffset $editorState.CursorOffset; $editorState.PreferredColumn = 0; $editorState.AutocompleteMatches = $null; return
+      $editorState.CursorOffset = Get-LineStartOffset $editorState.CursorOffset; $editorState.PreferredColumn = 0; $editorState.AutocompleteMatches = $null
+      if ($shift) { $script:lastKeyWasShiftNav = $true }
+      return
     }
     'End' {
-      if ($shift -and -not $editorState.IsSelectionActive) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
+      if ($shift -and -not $continuingShiftSelection) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
       if (-not $shift) { $editorState.IsSelectionActive = $false }
       $editorState.CursorOffset = Get-LineEndOffset $editorState.CursorOffset
-      $editorState.PreferredColumn = (Convert-OffsetToRowCol $editorState.CursorOffset)[1]; $editorState.AutocompleteMatches = $null; return
+      $editorState.PreferredColumn = (Convert-OffsetToRowCol $editorState.CursorOffset)[1]; $editorState.AutocompleteMatches = $null
+      if ($shift) { $script:lastKeyWasShiftNav = $true }
+      return
     }
     'PageUp' { $editorState.IsSelectionActive = $false; $editorState.AutocompleteMatches = $null; $page = [Console]::WindowHeight - 2; $row = (Convert-OffsetToRowCol $editorState.CursorOffset)[0]; $editorState.CursorOffset = Convert-RowColToOffset ([Math]::Max(0, $row - $page)) $editorState.PreferredColumn; return }
     'PageDown' { $editorState.IsSelectionActive = $false; $editorState.AutocompleteMatches = $null; $page = [Console]::WindowHeight - 2; $row = (Convert-OffsetToRowCol $editorState.CursorOffset)[0]; $editorState.CursorOffset = Convert-RowColToOffset ($row + $page) $editorState.PreferredColumn; return }
     'Enter' {
       Push-UndoSnapshot
       if ($editorState.IsSelectionActive) { Remove-SelectedText }
-      $curLine = Get-LineByNumber (Convert-OffsetToRowCol $editorState.CursorOffset)[0]
-      $lead = if ($curLine -match '^(\s+)') { $Matches[1] } else { '' }
-      $ins = "`n" + $lead
       $t = Get-BufferText
-      Set-BufferContent ($t.Substring(0, $editorState.CursorOffset) + $ins + $t.Substring($editorState.CursorOffset))
-      $editorState.CursorOffset += $ins.Length
-      $editorState.PreferredColumn = $lead.Length; $editorState.IsDirty = $true; $editorState.AutocompleteMatches = $null; return
+      Set-BufferContent ($t.Substring(0, $editorState.CursorOffset) + "`n" + $t.Substring($editorState.CursorOffset))
+      $editorState.CursorOffset++
+      $editorState.PreferredColumn = 0; $editorState.IsDirty = $true; $editorState.AutocompleteMatches = $null; return
     }
     'Backspace' {
       if ($editorState.IsSelectionActive) { Push-UndoSnapshot; Remove-SelectedText; $editorState.AutocompleteMatches = $null; return }
@@ -1475,6 +1532,23 @@ function Handle-SearchKey([ConsoleKeyInfo]$ki) {
   }
 }
 
+function Handle-SaveAsKey([ConsoleKeyInfo]$ki) {
+  switch ($ki.Key) {
+    'Escape' { $editorState.EditorMode = 'edit'; $editorState.SaveAsBuffer = ''; return }
+    'Enter' {
+      if ([string]::IsNullOrWhiteSpace($editorState.SaveAsBuffer)) { return }
+      $editorState.FilePath = Join-Path $PWD $editorState.SaveAsBuffer
+      $editorState.Language = Get-LanguageFromPath $editorState.FilePath
+      Load-EditorConfig $editorState.FilePath
+      Save-EditorFile
+      $editorState.EditorMode = 'edit'; $editorState.SaveAsBuffer = ''
+      return
+    }
+    'Backspace' { if ($editorState.SaveAsBuffer.Length -gt 0) { $editorState.SaveAsBuffer = $editorState.SaveAsBuffer.Substring(0, $editorState.SaveAsBuffer.Length - 1) }; return }
+    default { if ($ki.KeyChar -ne [char]0 -and -not [char]::IsControl($ki.KeyChar)) { $editorState.SaveAsBuffer += [string]$ki.KeyChar } }
+  }
+}
+
 function Show-ConfirmQuitDialog {
   $width = [Console]::WindowWidth
   $height = [Console]::WindowHeight
@@ -1485,11 +1559,11 @@ function Show-ConfirmQuitDialog {
   $sb = [System.Text.StringBuilder]::new()
   [void]$sb.Append("`e[?25l")
   [void]$sb.Append((Move-CursorToScreenCoordinate $top $left))
-  [void]$sb.Append("$(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundHeader')$(' ' * $boxW)$RESET_SEQUENCE")
+  [void]$sb.Append("$(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundHeader')$(' ' * $boxW)$script:RESET_SEQUENCE")
   [void]$sb.Append((Move-CursorToScreenCoordinate ($top + 1) $left))
-  [void]$sb.Append("$(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundHeader')$msg$(' ' * ($boxW - $msg.Length))$RESET_SEQUENCE")
+  [void]$sb.Append("$(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundHeader')$msg$(' ' * ($boxW - $msg.Length))$script:RESET_SEQUENCE")
   [void]$sb.Append((Move-CursorToScreenCoordinate ($top + 2) $left))
-  [void]$sb.Append("$(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundHeader')$(' ' * $boxW)$RESET_SEQUENCE")
+  [void]$sb.Append("$(Get-ThemeColor 'backgroundHeader')$(Get-ThemeColor 'foregroundHeader')$(' ' * $boxW)$script:RESET_SEQUENCE")
   Write-OutputBuffer($sb.ToString())
   while ($true) {
     $ev = Read-InputEvent
@@ -1540,24 +1614,20 @@ function Start-BabaeEditor {
       public const uint ENABLE_MOUSE_INPUT = 0x0010;
       public const uint ENABLE_EXTENDED_FLAGS = 0x0080;
       public const uint ENABLE_QUICK_EDIT_MODE = 0x0040;
+      public const uint ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200;
   }
 '@
     $handle = [ConsoleRaw]::GetStdHandle([ConsoleRaw]::STD_INPUT_HANDLE)
     [uint]$mode = 0
     [ConsoleRaw]::GetConsoleMode($handle, [ref]$mode)
     $script:originalConsoleMode = $mode
-    # remove echo, line, processed; add mouse and extended; remove quick edit
-    $newMode = ($mode -band (-bnot ([ConsoleRaw]::ENABLE_ECHO_INPUT -bor [ConsoleRaw]::ENABLE_LINE_INPUT -bor [ConsoleRaw]::ENABLE_PROCESSED_INPUT -bor [ConsoleRaw]::ENABLE_QUICK_EDIT_MODE))) `
-      -bor [ConsoleRaw]::ENABLE_MOUSE_INPUT -bor [ConsoleRaw]::ENABLE_EXTENDED_FLAGS
+    $newMode = ($mode -band (-bnot ([ConsoleRaw]::ENABLE_ECHO_INPUT -bor [ConsoleRaw]::ENABLE_LINE_INPUT -bor [ConsoleRaw]::ENABLE_PROCESSED_INPUT -bor [ConsoleRaw]::ENABLE_QUICK_EDIT_MODE))) -bor [ConsoleRaw]::ENABLE_MOUSE_INPUT -bor [ConsoleRaw]::ENABLE_EXTENDED_FLAGS -bor [ConsoleRaw]::ENABLE_VIRTUAL_TERMINAL_INPUT
     [ConsoleRaw]::SetConsoleMode($handle, $newMode)
-    # DEBUG: read back the mode to verify
-    [uint]$modeCheck = 0
-    [ConsoleRaw]::GetConsoleMode($handle, [ref]$modeCheck)
-    Write-Host "Raw mode set. Mode before: $script:originalConsoleMode, after: $modeCheck" -ForegroundColor Green
-    Start-Sleep -Seconds 2
   }
 
   Write-OutputBuffer("`e[?1049h`e[?2004h`e[?25l`e[2J`e[3J`e[H")
+  Write-OutputBuffer($script:SEQ_MOUSE_TRACKING_OFF)
+  Write-OutputBuffer($script:SEQ_AUTOWRAP_OFF)
 
   $prevW = 0; $prevH = 0
   $script:shouldExitApplication = $false
@@ -1565,7 +1635,10 @@ function Start-BabaeEditor {
   try {
     while (-not $script:shouldExitApplication) {
       $w = [Console]::WindowWidth; $h = [Console]::WindowHeight
-      if ($w -ne $prevW -or $h -ne $prevH) { $prevW = $w; $prevH = $h; Clear-RenderCache }
+      if ($w -ne $prevW -or $h -ne $prevH) {
+        $prevW = $w; $prevH = $h; Clear-RenderCache
+        Set-ScrollMargins 2 ($h - 1)
+      }
 
       Update-ScrollPosition
 
@@ -1576,47 +1649,27 @@ function Start-BabaeEditor {
 
       Render-EditorFrame
 
-      # if (-not (Test-InputDataAvailable)) { Start-Sleep -Milliseconds $script:frameDelayMilliseconds; continue }
-
-      # Check if there's a burst of input (likely a paste)
-      if ($script:pendingByteQueue.Count -gt 0) {
-          Drain-OsPipeBuffers
-          if ($script:pendingByteQueue.Count -gt 8) {
-              $pasteText = Read-AllAvailableText
-              if ($pasteText) {
-                  $pasteText = $pasteText -replace "`e\[200~" -replace "`e\[201~"
-                  Paste-TextFromClipboard $pasteText
-                  Update-ScrollPosition
-                  Render-EditorFrame
-                  continue
-              }
-          }
-      }
-
       $ev = Read-InputEvent
       if ($ev.Kind -eq 'Paste') { Paste-TextFromClipboard $ev.Text }
       else {
         switch ($editorState.EditorMode) {
           'edit' { Handle-EditingKey $ev.KeyInfo }
           'search' { Handle-SearchKey $ev.KeyInfo }
+          'save-as' { Handle-SaveAsKey $ev.KeyInfo }
         }
       }
       Clamp-CursorOffset
     }
   } finally {
-    # Restore original console mode on Windows
-    if ($IsWindows -or $env:OS -eq 'Windows_NT') {
-      if ($script:originalConsoleMode) {
-        $handle = [ConsoleRaw]::GetStdHandle([ConsoleRaw]::STD_INPUT_HANDLE)
-        [ConsoleRaw]::SetConsoleMode($handle, $script:originalConsoleMode)
-      }
-    }
-    # Restore original stty settings on Unix
     if ($script:isUnixPlatform -and $script:originalSttySettings -and -not [Console]::IsInputRedirected) {
       try { stty $script:originalSttySettings 2>/dev/null } catch {}
     }
     [Console]::TreatControlCAsInput = $true
+    Reset-ScrollMargins
+    Write-OutputBuffer($script:SEQ_MOUSE_TRACKING_OFF)
+    Write-OutputBuffer($script:SEQ_AUTOWRAP_OFF)
     Write-OutputBuffer("`e[?2004l`e[?1049l`e[?25h`e[0m")
+    Write-OutputBuffer($script:SEQ_AUTOWRAP_ON)
     Write-Host 'babae: session ended.' -ForegroundColor Cyan
     if ($editorState.FilePath) { Write-Host "File : $($editorState.FilePath)" -ForegroundColor DarkGray }
   }
