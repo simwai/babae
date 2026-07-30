@@ -52,7 +52,7 @@ if (-not [Console]::IsInputRedirected -and -not $Env:BABAE_SKIP_INSTALL) {
         $installedHash = (Get-FileHash $installedScriptPath -Algorithm SHA256).Hash
         if ($currentHash -ne $installedHash) {
           $shouldUpdate = $true
-          $message = " A different version of babae is installed globally. Update it? (y/n): "
+          $message = " A different version of babae is installed globally. Update it? (Y/n): "
         }
       } catch {}
     }
@@ -60,7 +60,7 @@ if (-not [Console]::IsInputRedirected -and -not $Env:BABAE_SKIP_INSTALL) {
     if ($shouldUpdate) {
       Write-Host "`n$message" -NoNewline -ForegroundColor Cyan
       $choice = Read-Host
-      if ($choice -eq 'y') {
+      if ([string]::IsNullOrWhiteSpace($choice) -or $choice -match '^[Yy]') {
         if (-not (Test-Path $installDirectory)) { New-Item -ItemType Directory -Path $installDirectory -Force | Out-Null }
         Copy-Item -Path $currentScriptPath -Destination $installedScriptPath -Force
 
