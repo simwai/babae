@@ -1560,7 +1560,7 @@ function Handle-SaveAsKey([ConsoleKeyInfo]$ki) {
 function Show-ConfirmQuitDialog {
   $width = [Console]::WindowWidth
   $height = [Console]::WindowHeight
-  $msg = '  Unsaved changes — quit anyway?  [Y / N]  '
+  $msg = '  Unsaved changes — quit anyway?  [y / N]  '
   $boxW = $msg.Length + 2
   $top = [int](($height - 3) / 2)
   $left = [int](($width - $boxW) / 2)
@@ -1577,7 +1577,7 @@ function Show-ConfirmQuitDialog {
     $ev = Read-InputEvent
     if ($ev.Kind -ne 'Key') { continue }
     if ($ev.KeyInfo.Key -eq 'Y') { $script:shouldExitApplication = $true; return }
-    if ($ev.KeyInfo.Key -in 'N', 'Escape') { $editorState.EditorMode = 'edit'; $editorState.StatusMessage = ' Quit cancelled '; Clear-RenderCache; return }
+    if ($ev.KeyInfo.Key -in 'N', 'Escape', 'Enter') { $editorState.EditorMode = 'edit'; $editorState.StatusMessage = ' Quit cancelled '; Clear-RenderCache; return }
   }
 }
 
