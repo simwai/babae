@@ -30,7 +30,17 @@ if (-not [Console]::IsInputRedirected -and -not $Env:BABAE_SKIP_INSTALL) {
   $installedScriptPath = Join-Path $installDirectory "babae.ps1"
   $currentScriptPath = $PSCommandPath
 
-  if ($currentScriptPath -and (Test-Path $currentScriptPath) -and (Resolve-Path $currentScriptPath).Path -ne $installedScriptPath) {
+  $isRunningFromInstalledCopy = $false
+  if ($currentScriptPath) {
+    if (Test-Path $currentScriptPath) {
+      $resolvedCurrent = (Resolve-Path $currentScriptPath).Path
+      if ($resolvedCurrent -eq $installedScriptPath) {
+        $isRunningFromInstalledCopy = $true
+      }
+    }
+  }
+
+  if ($currentScriptPath -and -not $isRunningFromInstalledCopy) {
     $shouldUpdate = $false
     $message = ""
     if (-not (Test-Path $installedScriptPath)) {
@@ -399,19 +409,18 @@ function Parse-EscapeSequence([string]$sequence) {
 function Read-InputEvent {
   $firstByte = Read-ByteFromInput
   if ($firstByte -eq -1) {
-    return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::NoName) 0) }
+    return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]26) ([System.ConsoleKey]::Z) ([System.ConsoleModifiers]::Control)) }
   }
 
   if ($firstByte -eq 27) {
     Drain-OsPipeBuffers
     if ($script:pendingByteQueue.Count -eq 0) {
       $w = 0
-      while ($script:pendingByteQueue.Count -eq 0 -and $w -lt 5) {
-        Start-Sleep -Milliseconds 2; $w++
-        Drain-OsPipeBuffers
-      }
+      while ($script:pendingByteQueue.Count -eq 0 -and $w -lt 5) { Start-Sleep -Milliseconds 2; $w++; Drain-OsPipeBuffers }
+      if ($script:pendingByteQueue.Count -eq 0) { return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]27) ([System.ConsoleKey]::Escape) 0) } }
     }
-    if ($script:pendingByteQueue.Count -eq 0) {
+    $peekChar = [char]$script:pendingByteQueue.Peek()
+    if ($peekChar -ne '[' -and $peekChar -ne 'O') {
       return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]27) ([System.ConsoleKey]::Escape) 0) }
     }
     $seqBuilder = [System.Text.StringBuilder]::new()
@@ -1446,21 +1455,20 @@ function Handle-EditingKey([ConsoleKeyInfo]$ki) {
       $prefix = Get-WordPrefixAtCursor
       if ($prefix -ne '' -and ($null -eq $editorState.AutocompleteMatches)) {
         $words = Get-AllWordsInBuffer
-        $matches = $words | Where-Object { $_ -like "$prefix*" } | Sort-Object -Unique
-        if ($matches.Count -eq 1) {
+        $matchedWords = $words | Where-Object { $_ -like "$prefix*" } | Sort-Object -Unique
+        if ($matchedWords.Count -eq 1) {
           Push-UndoSnapshot
-          Insert-TextAtCursor $matches[0].Substring($prefix.Length)
+          Insert-TextAtCursor $matchedWords[0].Substring($prefix.Length)
           $editorState.AutocompleteMatches = $null
-        } elseif ($matches.Count -gt 1) {
-          $editorState.AutocompleteMatches = @($matches)
+        } elseif ($matchedWords.Count -gt 1) {
+          $editorState.AutocompleteMatches = @($matchedWords)
           $editorState.AutocompleteIndex = 0
           $editorState.AutocompleteBaseOffset = $editorState.CursorOffset - $prefix.Length
           Push-UndoSnapshot
-          Replace-CurrentWord $matches[0]
+          Replace-CurrentWord $matchedWords[0]
         } else { Push-UndoSnapshot; Insert-TextAtCursor (Get-IndentationString) }
       } elseif ($null -ne $editorState.AutocompleteMatches) {
         $editorState.AutocompleteIndex = ($editorState.AutocompleteIndex + 1) % $editorState.AutocompleteMatches.Count
-        $oldLen = $editorState.CursorOffset - $editorState.AutocompleteBaseOffset
         $t = Get-BufferText
         $before = $t.Substring(0, $editorState.AutocompleteBaseOffset)
         $after = $t.Substring($editorState.CursorOffset)
@@ -1473,7 +1481,7 @@ function Handle-EditingKey([ConsoleKeyInfo]$ki) {
       } else { Push-UndoSnapshot; Insert-TextAtCursor (Get-IndentationString) }
       return
     }
-    'Escape' { $editorState.IsSelectionActive = $false; $editorState.AutocompleteMatches = $null; return }
+    'Escape' { $editorState.EditorMode = 'edit'; $editorState.SearchBuffer = ''; $editorState.IsSelectionActive = $false; $editorState.AutocompleteMatches = $null; return }
   }
 
   if ([int]$ch -ge 32 -and [int]$ch -ne 127) {
@@ -1573,6 +1581,58 @@ function Show-ConfirmQuitDialog {
   }
 }
 
+$script:isWindowsPlatform = $IsWindows -or $env:OS -eq 'Windows_NT'
+
+function Enter-RawInputMode {
+  $script:isUnixPlatform = $IsLinux -or $IsMacOS
+  $script:originalSttySettings = $null
+  $script:originalConsoleMode = $null
+
+  if ($script:isUnixPlatform -and -not [Console]::IsInputRedirected) {
+    $script:originalSttySettings = stty -g 2>/dev/null
+    stty raw -echo 2>/dev/null
+    return
+  }
+  if (-not $script:isWindowsPlatform) { return }
+
+  Add-Type -TypeDefinition @'
+    using System;
+    using System.Runtime.InteropServices;
+    public static class ConsoleRaw {
+        [DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n);
+        [DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr h, out uint mode);
+        [DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, uint mode);
+        public const int STD_INPUT_HANDLE = -10;
+        public const uint ENABLE_ECHO_INPUT = 0x0004;
+        public const uint ENABLE_LINE_INPUT = 0x0002;
+        public const uint ENABLE_PROCESSED_INPUT = 0x0001;
+        public const uint ENABLE_EXTENDED_FLAGS = 0x0080;
+        public const uint ENABLE_QUICK_EDIT_MODE = 0x0040;
+        public const uint ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200;
+    }
+'@ -ErrorAction SilentlyContinue
+
+  $handle = [ConsoleRaw]::GetStdHandle([ConsoleRaw]::STD_INPUT_HANDLE)
+  [uint]$mode = 0
+  [ConsoleRaw]::GetConsoleMode($handle, [ref]$mode)
+  $script:originalConsoleMode = $mode
+  $newMode = ($mode -band (-bnot ([ConsoleRaw]::ENABLE_ECHO_INPUT -bor [ConsoleRaw]::ENABLE_LINE_INPUT -bor [ConsoleRaw]::ENABLE_PROCESSED_INPUT -bor [ConsoleRaw]::ENABLE_QUICK_EDIT_MODE))) `
+    -bor [ConsoleRaw]::ENABLE_EXTENDED_FLAGS -bor [ConsoleRaw]::ENABLE_VIRTUAL_TERMINAL_INPUT
+  [ConsoleRaw]::SetConsoleMode($handle, $newMode)
+}
+
+function Exit-RawInputMode {
+  if ($null -ne $script:originalConsoleMode) {
+    try {
+      $handle = [ConsoleRaw]::GetStdHandle([ConsoleRaw]::STD_INPUT_HANDLE)
+      [ConsoleRaw]::SetConsoleMode($handle, $script:originalConsoleMode)
+    } catch {}
+  }
+  if ($script:originalSttySettings -and -not [Console]::IsInputRedirected) {
+    try { stty $script:originalSttySettings 2>/dev/null } catch {}
+  }
+}
+
 function Start-BabaeEditor {
   [CmdletBinding()]
   param([Parameter(Position = 0)][string]$Path)
@@ -1591,48 +1651,17 @@ function Start-BabaeEditor {
     Set-BufferContent ''
     Load-EditorConfig ''
   }
-  [Console]::TreatControlCAsInput = $true
-
-  $script:isUnixPlatform = $IsLinux -or $IsMacOS
-  if ($script:isUnixPlatform -and -not [Console]::IsInputRedirected) {
-    $script:originalSttySettings = stty -g 2>/dev/null
-    stty raw -echo 2>/dev/null
-  }
-
-  if ($IsWindows -or $env:OS -eq 'Windows_NT') {
-    Add-Type -TypeDefinition @'
-  using System;
-  using System.Runtime.InteropServices;
-  public static class ConsoleRaw {
-      [DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n);
-      [DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr h, out uint mode);
-      [DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, uint mode);
-      public const int STD_INPUT_HANDLE = -10;
-      public const uint ENABLE_ECHO_INPUT = 0x0004;
-      public const uint ENABLE_LINE_INPUT = 0x0002;
-      public const uint ENABLE_PROCESSED_INPUT = 0x0001;
-      public const uint ENABLE_MOUSE_INPUT = 0x0010;
-      public const uint ENABLE_EXTENDED_FLAGS = 0x0080;
-      public const uint ENABLE_QUICK_EDIT_MODE = 0x0040;
-      public const uint ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200;
-  }
-'@
-    $handle = [ConsoleRaw]::GetStdHandle([ConsoleRaw]::STD_INPUT_HANDLE)
-    [uint]$mode = 0
-    [ConsoleRaw]::GetConsoleMode($handle, [ref]$mode)
-    $script:originalConsoleMode = $mode
-    $newMode = ($mode -band (-bnot ([ConsoleRaw]::ENABLE_ECHO_INPUT -bor [ConsoleRaw]::ENABLE_LINE_INPUT -bor [ConsoleRaw]::ENABLE_PROCESSED_INPUT -bor [ConsoleRaw]::ENABLE_QUICK_EDIT_MODE))) -bor [ConsoleRaw]::ENABLE_MOUSE_INPUT -bor [ConsoleRaw]::ENABLE_EXTENDED_FLAGS -bor [ConsoleRaw]::ENABLE_VIRTUAL_TERMINAL_INPUT
-    [ConsoleRaw]::SetConsoleMode($handle, $newMode)
-  }
-
-  Write-OutputBuffer("`e[?1049h`e[?2004h`e[?25l`e[2J`e[3J`e[H")
-  Write-OutputBuffer($script:SEQ_MOUSE_TRACKING_OFF)
-  Write-OutputBuffer($script:SEQ_AUTOWRAP_OFF)
 
   $prevW = 0; $prevH = 0
   $script:shouldExitApplication = $false
 
   try {
+    [Console]::TreatControlCAsInput = $true
+    Enter-RawInputMode
+    Write-OutputBuffer("`e[?1049h`e[?2004h`e[?25l`e[2J`e[3J`e[H")
+    Write-OutputBuffer($script:SEQ_MOUSE_TRACKING_OFF)
+    Write-OutputBuffer($script:SEQ_AUTOWRAP_OFF)
+
     while (-not $script:shouldExitApplication) {
       $w = [Console]::WindowWidth; $h = [Console]::WindowHeight
       if ($w -ne $prevW -or $h -ne $prevH) {
@@ -1661,13 +1690,10 @@ function Start-BabaeEditor {
       Clamp-CursorOffset
     }
   } finally {
-    if ($script:isUnixPlatform -and $script:originalSttySettings -and -not [Console]::IsInputRedirected) {
-      try { stty $script:originalSttySettings 2>/dev/null } catch {}
-    }
+    Exit-RawInputMode
     [Console]::TreatControlCAsInput = $true
     Reset-ScrollMargins
     Write-OutputBuffer($script:SEQ_MOUSE_TRACKING_OFF)
-    Write-OutputBuffer($script:SEQ_AUTOWRAP_OFF)
     Write-OutputBuffer("`e[?2004l`e[?1049l`e[?25h`e[0m")
     Write-OutputBuffer($script:SEQ_AUTOWRAP_ON)
     Write-Host 'babae: session ended.' -ForegroundColor Cyan
