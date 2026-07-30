@@ -1614,11 +1614,11 @@ function Enter-RawInputMode {
 
   $handle = [ConsoleRaw]::GetStdHandle([ConsoleRaw]::STD_INPUT_HANDLE)
   [uint]$mode = 0
-  [ConsoleRaw]::GetConsoleMode($handle, [ref]$mode)
+  [void][ConsoleRaw]::GetConsoleMode($handle, [ref]$mode)
   $script:originalConsoleMode = $mode
   $newMode = ($mode -band (-bnot ([ConsoleRaw]::ENABLE_ECHO_INPUT -bor [ConsoleRaw]::ENABLE_LINE_INPUT -bor [ConsoleRaw]::ENABLE_PROCESSED_INPUT -bor [ConsoleRaw]::ENABLE_QUICK_EDIT_MODE))) `
     -bor [ConsoleRaw]::ENABLE_EXTENDED_FLAGS -bor [ConsoleRaw]::ENABLE_VIRTUAL_TERMINAL_INPUT
-  [ConsoleRaw]::SetConsoleMode($handle, $newMode)
+  [void][ConsoleRaw]::SetConsoleMode($handle, $newMode)
 }
 
 function Exit-RawInputMode {
