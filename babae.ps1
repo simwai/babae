@@ -1340,8 +1340,6 @@ function Handle-EditingKey([ConsoleKeyInfo]$ki) {
   $ctrl = ($ki.Modifiers -band [ConsoleModifiers]::Control) -ne 0
   $shift = ($ki.Modifiers -band [ConsoleModifiers]::Shift) -ne 0
   $ch = $ki.KeyChar
-  $continuingShiftSelection = $shift -and $script:lastKeyWasShiftNav
-  $script:lastKeyWasShiftNav = $false
 
   if ($ctrl) {
     switch ($key) {
@@ -1368,56 +1366,50 @@ function Handle-EditingKey([ConsoleKeyInfo]$ki) {
     'LeftArrow' {
       if ($editorState.IsSelectionActive -and -not $shift) { $editorState.CursorOffset = (Get-SelectionBoundaries)[0] }
       elseif ($editorState.CursorOffset -gt 0) {
-        if ($shift -and -not $continuingShiftSelection) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
+        if ($shift -and -not $editorState.IsSelectionActive) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
         $editorState.CursorOffset--
       }
       if (-not $shift) { $editorState.IsSelectionActive = $false }
       $editorState.PreferredColumn = (Convert-OffsetToRowCol $editorState.CursorOffset)[1]; $editorState.AutocompleteMatches = $null
-      if ($shift) { $script:lastKeyWasShiftNav = $true }
       return
     }
     'RightArrow' {
       if ($editorState.IsSelectionActive -and -not $shift) { $editorState.CursorOffset = (Get-SelectionBoundaries)[1] }
       elseif ($editorState.CursorOffset -lt $editorState.TextBuffer.Length) {
-        if ($shift -and -not $continuingShiftSelection) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
+        if ($shift -and -not $editorState.IsSelectionActive) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
         $editorState.CursorOffset++
       }
       if (-not $shift) { $editorState.IsSelectionActive = $false }
       $editorState.PreferredColumn = (Convert-OffsetToRowCol $editorState.CursorOffset)[1]; $editorState.AutocompleteMatches = $null
-      if ($shift) { $script:lastKeyWasShiftNav = $true }
       return
     }
     'UpArrow' {
-      if ($shift -and -not $continuingShiftSelection) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
+      if ($shift -and -not $editorState.IsSelectionActive) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
       if (-not $shift) { $editorState.IsSelectionActive = $false }
       $row = (Convert-OffsetToRowCol $editorState.CursorOffset)[0]
       if ($row -gt 0) { $editorState.CursorOffset = Convert-RowColToOffset ($row - 1) $editorState.PreferredColumn }
       $editorState.AutocompleteMatches = $null
-      if ($shift) { $script:lastKeyWasShiftNav = $true }
       return
     }
     'DownArrow' {
-      if ($shift -and -not $continuingShiftSelection) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
+      if ($shift -and -not $editorState.IsSelectionActive) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
       if (-not $shift) { $editorState.IsSelectionActive = $false }
       $row = (Convert-OffsetToRowCol $editorState.CursorOffset)[0]
       $editorState.CursorOffset = Convert-RowColToOffset ($row + 1) $editorState.PreferredColumn
       $editorState.AutocompleteMatches = $null
-      if ($shift) { $script:lastKeyWasShiftNav = $true }
       return
     }
     'Home' {
-      if ($shift -and -not $continuingShiftSelection) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
+      if ($shift -and -not $editorState.IsSelectionActive) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
       if (-not $shift) { $editorState.IsSelectionActive = $false }
       $editorState.CursorOffset = Get-LineStartOffset $editorState.CursorOffset; $editorState.PreferredColumn = 0; $editorState.AutocompleteMatches = $null
-      if ($shift) { $script:lastKeyWasShiftNav = $true }
       return
     }
     'End' {
-      if ($shift -and -not $continuingShiftSelection) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
+      if ($shift -and -not $editorState.IsSelectionActive) { $editorState.SelectionAnchor = $editorState.CursorOffset; $editorState.IsSelectionActive = $true }
       if (-not $shift) { $editorState.IsSelectionActive = $false }
       $editorState.CursorOffset = Get-LineEndOffset $editorState.CursorOffset
       $editorState.PreferredColumn = (Convert-OffsetToRowCol $editorState.CursorOffset)[1]; $editorState.AutocompleteMatches = $null
-      if ($shift) { $script:lastKeyWasShiftNav = $true }
       return
     }
     'PageUp' { $editorState.IsSelectionActive = $false; $editorState.AutocompleteMatches = $null; $page = [Console]::WindowHeight - 2; $row = (Convert-OffsetToRowCol $editorState.CursorOffset)[0]; $editorState.CursorOffset = Convert-RowColToOffset ([Math]::Max(0, $row - $page)) $editorState.PreferredColumn; return }
