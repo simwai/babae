@@ -74,7 +74,7 @@ babae requires PowerShell 7 or later.
 ### 2. Download babae
 
 ```bash
-curl -O https://raw.githubusercontent.com/simwai/babae/main/babae.ps1
+curl -O https://gitlab.com/simwai/babae/-/raw/main/babae.ps1
 ```
 
 That is the entire installation.

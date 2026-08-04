@@ -7,7 +7,7 @@
     syntax highlighting, horizontal scrolling, autocomplete.
 .NOTES
     PS installation: https://learn.microsoft.com/en-us/powershell/scripting/install/install-ubuntu?view=powershell-7.6
-    babae installation: curl https://raw.githubusercontent.com/BabaDeluxe/babadeluxe-scripts/refs/heads/master/babae.ps1 > babae.ps1
+    babae installation: curl -O https://gitlab.com/simwai/babae/-/raw/main/babae.ps1
 .PARAMETER Path
     Optional file to open on launch.
 .PARAMETER Theme
