@@ -1,0 +1,165 @@
+<HIGH_PRIO_ENFORCEMENT>
+# Session State
+
+Use this module in any multi-persona session or whenever a mid-session mode switch occurs.
+
+## Purpose
+
+`SESSION_STATE.md` is a temporary, machine-readable file written and read by the active persona at every phase transition and mode switch. It preserves context across:
+- Phase transitions within a session
+- DISCUSS mode entry and exit
+- Mid-session persona switches
+
+!!! `SESSION_STATE.md` must be listed in `.gitignore`. It is never committed.
+
+## File location
+
+Always at repo root: `SESSION_STATE.md`
+
+## Initialization
+
+When `SESSION_STATE.md` is first required (phase transition, DISCUSS entry,
+persona switch, or mode switch) and does not yet exist:
+
+1. Create it from the template below with all fields set to their default values.
+2. Verify that `.gitignore` contains `SESSION_STATE.md`. If not, append it and
+   note the addition in the session log.
+3. Do not commit `SESSION_STATE.md`. It is a temporary working artifact.
+
+## Write rules
+
+The active persona writes or overwrites `SESSION_STATE.md` at every:
+- Phase transition
+- DISCUSS entry or exit
+- Persona switch
+- Promotion of a discuss item
+
+If the file does not exist, create it from scratch using the template below.
+
+## Read rules
+
+- Any incoming persona must read `SESSION_STATE.md` before emitting its first response.
+- If the file is missing and the session has a prior context, go BLOCKED and request the state file.
+- If the file is present but fields are missing, fill them from conversation context where unambiguous; otherwise go BLOCKED on the missing field.
+
+## Template
+
+```md
+# SESSION STATE
+<!-- Auto-written by active persona. Do not edit manually. -->
+
+## Meta
+active_persona: <persona name>
+current_phase: <phase>
+prior_phase: <phase or NONE>
+planning_mode: <direct|full|NONE>
+execution_mode: <AUTO|DIRECT|STRUCTURED>
+mode_reason: <short reason>
+mode_override: <auto|direct|structured|NONE>
+session_start: <ISO timestamp or UNKNOWN>
+last_updated: <ISO timestamp>
+
+## Target
+repo: <repo path or UNKNOWN>
+scope: <description or UNKNOWN>
+language: <language or UNKNOWN>
+
+## Backlog
+<!-- Filled during BACKLOG phase (BabaScrumMaster, full mode only) -->
+- <item_id>: <description> [size: XS|S|M|L] [ICE: I*C*E] [milestone: <id>] [DoD]
+
+## Milestones
+<!-- Declared during INTAKE -->
+- <id>: <name> -- <target> -- <definition of done>
+
+## Current Sprint
+<!-- Filled during SPRINT phase (BabaScrumMaster, full mode only) -->
+sprint: <# or NONE>
+goal: <sprint goal>
+board:
+- To do: []
+- In progress: []
+- Done: []
+
+## Current Task
+<!-- Task card approved during TASK_PLAN, handed into CHECKLIST -->
+target: <NONE or path>
+size: <XS|S|M|L or NONE>
+ice: <I*C*E or NONE>
+milestone: <id or NONE>
+definition_of_done: []
+
+## Findings
+<!-- Accepted violations carried forward from REVIEW decision -->
+- <criterion_id>: <summary> [tier: hard|soft] ([confidence]%)
+
+## Open Questions
+<!-- Unresolved questions from any phase -->
+- <question>
+
+## Preservation Constraints
+<!-- Must-preserve items confirmed by user -->
+- <constraint>
+
+## Promoted From Discuss
+<!-- Items explicitly promoted by user from DISCUSS phase -->
+- <item> [from:DISCUSS]
+
+## Review Decision
+<!-- Filled when user confirms the REVIEW decision section -->
+status: pending|confirmed|disputed
+accepted_violations: []
+disputed_violations: []
+confirmed_at: <ISO timestamp or NONE>
+
+## Plan Approval
+<!-- Filled when user explicitly approves PLAN -->
+status: pending|approved|rejected
+approved_at: <ISO timestamp or NONE>
+approved_plan_summary: <NONE or short summary>
+
+## Rewrite Contract
+<!-- Filled during PLAN phase -->
+target: <NONE or path>
+must_preserve: []
+must_eliminate: []
+forbidden_in_patch: []
+
+## Verification
+<!-- Filled during/after PATCH -->
+diff_inspected: false
+checks_run: []
+results: NONE|PASS|FAIL|SKIPPED
+notes: []
+
+## MCP Preflight
+<!-- One setup/readiness result per MCP server for this session; do not repeat successful checks. -->
+- <server>: <ready|unavailable|not_checked> -- <short evidence> -- checked_at: <ISO timestamp>
+
+## Persona Switch Log
+<!-- Append only — never delete entries -->
+- <ISO timestamp>: <from_persona> -> <to_persona> at phase <phase>
+```
+
+## Mid-session persona switch protocol
+
+When the user explicitly requests a persona switch mid-session (e.g. "switch to BabaTester", "let BabaSensei look at this"):
+
+1. Active persona writes current full state to `SESSION_STATE.md` including a new entry in `Persona Switch Log`
+2. Active persona emits: `[PERSONA SWITCH: <from> -> <to>]` and a one-line state summary
+3. Incoming persona reads `SESSION_STATE.md` in full
+4. Incoming persona emits: `[PERSONA: <name>] [PHASE: <current_phase>]` and confirms restored context in one line
+5. Incoming persona continues from the current phase — it does NOT restart
+
+!!! A persona switch does not reset the phase.
+!!! A persona switch does not clear findings, constraints, or open questions.
+!!! If incoming persona cannot satisfy a hard constraint of the current phase, it goes BLOCKED.
+
+## Cleanup rule
+
+Delete `SESSION_STATE.md` when:
+- Session concludes with a successful PATCH or explicit user close
+- User says "close session", "end session", or "clean up"
+
+Do not delete on FAILURE — preserve for post-mortem.
+</HIGH_PRIO_ENFORCEMENT>

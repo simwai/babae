@@ -1,0 +1,35 @@
+# Failure Guards
+
+Use this module to detect and handle protocol breach.
+
+## Breach conditions
+
+A protocol breach has occurred when:
+- a response contains content from more than one phase
+- !!! a patch is emitted without an approved plan
+- !!! a patch is emitted without a complete rewrite contract
+- the phase header is missing (in `STRUCTURED` mode only; `DIRECT` mode uses `[MODE: DIRECT]`)
+- a later-phase action is taken in response to a user request without phase transition
+- review findings are emitted without a checklist artifact
+- docs-dependent judgment is emitted without docs evidence
+
+## Recovery rule
+
+1. Identify the last valid phase.
+2. Return to that phase.
+3. Output only the allowed template for that phase.
+4. If the next response breaches again, terminate with FAILURE.
+
+## FAILURE trigger
+
+!!! FAILURE is triggered when:
+- one recovery attempt already failed
+- the next response breaches protocol again
+
+## Post-failure rule
+
+!!! After FAILURE:
+- Do not continue until the user explicitly requests a retry.
+- Emit only the FAILURE template while waiting for that retry request.
+- On an explicit retry, resume from the recorded last valid phase.
+- Do not require a module reload or force a `BLOCKED` phase to retry.

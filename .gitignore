@@ -1,0 +1,6 @@
+# Build output
+/dist/
+
+# .NET
+src/Launcher/bin/
+src/Launcher/obj/

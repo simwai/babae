@@ -4,7 +4,7 @@
 
 The "Staircase Bug" (sometimes referred to as the "Stairway" effect) is a common issue in terminal-based text editors, especially when used over SSH or in certain terminal emulators (like Bitvise or older xterm configurations).
 
-When you paste multi-line, indented text into an editor using the terminal's native "Right-Click Paste" or "Middle-Click Paste", the terminal sends the text to the editor's standard input stream as if it were being typed extremely fast.
+When you paste multi-line, indented text into an editor using the terminal's native "Right-Click Paste" or "Middle-Click Paste", the terminal sends the text to the editor's standard input stream as if it were being typed extremely fast. This is separate from `Ctrl+V`, which reads the operating system clipboard directly.
 
 ### The Problem: Compounded Auto-Indentation
 Most modern editors have an "Auto-Indent" feature: when you press `Enter` (`\n`), the editor automatically inserts the same amount of leading whitespace on the new line as the previous line.
@@ -35,16 +35,18 @@ When BPM is enabled, the terminal wraps the paste payload:
 - **Start Marker:** `ESC [ 200 ~`
 - **End Marker:** `ESC [ 201 ~`
 
-### 3. Dual-Path Input Handling
-babae's input engine (both the interactive Runspace and the raw Stdin reader) is designed to look for these markers.
+### 3. Raw stdin detection and the bypass
+babae does not use `Console.ReadKey` to process terminal input. It puts the input into raw mode and reads bytes from stdin, which allows the BPM prefix to be seen reliably even when the session is running over SSH or stdin is redirected.
 
-- **Detection:** When the `ESC [ 200 ~` sequence is detected, babae immediately switches its input state to "Pasting".
-- **Verbatim Insertion:** While in the "Pasting" state, babae reads characters and inserts them **directly into the buffer** using the `Paste-Text` function.
-- **Bypassing Handlers:** Because the text is routed through `Paste-Text` instead of the standard `Handle-EditKey` routine, the `Enter` key handler is never triggered for newlines inside the paste. No auto-indent logic runs, so no extra spaces are injected.
-- **Completion:** Once `ESC [ 201 ~` is encountered, babae returns to normal "Typing" mode.
+- **Detection:** `Read-InputEvent` assembles an escape sequence byte by byte. When it recognizes `ESC [ 200 ~`, it returns a `Paste` event instead of a normal key event.
+- **Verbatim insertion:** `Read-PastedText` drains the bytes already buffered after the prefix, decodes them as UTF-8, and normalizes CRLF/CR to LF. The main loop sends the resulting text to `Paste-TextFromClipboard`.
+- **The bypass:** `Paste-TextFromClipboard` inserts the complete text into the buffer in one operation. It does not call `Handle-EditingKey`, so the embedded newlines never reach the normal Enter handler and cannot trigger indentation logic. The BPM markers are also removed defensively if they are present in the drained text.
+- **Manual Enter remains separate:** A manually typed Enter is handled by `Handle-EditingKey` and inserts only a newline. It does not copy the current line's indentation. This independently prevents indentation from compounding if input is received outside the paste path.
 
-### 4. SSH Robustness
-SSH often delivers data in small TCP segments. If a paste is large, the `ESC [ 201 ~` marker might arrive several milliseconds after the start of the paste. babae's `Stdin-DrainPaste` function uses an **adaptive backoff timer** (waiting up to 2000ms with small sleeps) to ensure it waits long enough for the full payload to arrive over a high-latency connection without timing out prematurely and leaving the editor in a broken state.
+### 4. Clipboard paste is a separate path
+`Ctrl+V` calls `Get-ClipboardContent`, using Windows Forms on Windows or `pbpaste`, `wl-paste`, `xclip`, or `xsel` on Unix-like systems. The returned text is passed to the same `Paste-TextFromClipboard` insertion function, so it also bypasses the key-by-key Enter path. A terminal right-click paste does not use those clipboard tools; it arrives as a BPM-framed stdin stream.
+
+The raw reader does wait briefly while reassembling an escape sequence, but it does not implement a separate adaptive 2000 ms paste timer or a paste state machine keyed off the closing marker. The current fix therefore relies on byte-level prefix detection, direct buffer insertion, defensive marker stripping, and the non-indenting manual Enter handler.
 
 ---
 
@@ -52,6 +54,6 @@ SSH often delivers data in small TCP segments. If a paste is large, the `ESC [ 2
 
 You can verify the fix in babae by running the Pester test suite:
 ```pwsh
-Invoke-Pester ./babae.tests.ps1 -TestName "Staircase regression"
+Invoke-Pester ./babae.tests.ps1 -FullNameFilter '*Staircase regression*'
 ```
-These tests simulate raw byte streams containing BPM sequences and verify that the resulting file on disk matches the input exactly, with no compounded indentation.
+These tests simulate raw byte streams containing BPM sequences and verify that the resulting file on disk matches the input exactly, with no compounded indentation. They also verify that manually typed Enter still works independently and that `Ctrl+V` remains a separate, non-crashing clipboard path.

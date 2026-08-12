@@ -1,0 +1,38 @@
+# Interaction Layer
+
+Use this module during REVIEW and PLAN phases to structure user decisions.
+
+## Decision format
+
+When a user decision is required inside the active phase, keep the current phase header and use this structure:
+
+```txt
+[PHASE: <current phase>]
+
+# Decision Needed
+Question: [short question]
+Recommended: [option letter] -- [one-sentence reason]
+
+- A. [recommended option]
+  - Pros: [short pros]
+  - Cons: [short cons]
+- B. [option]
+  - Pros: [short pros]
+  - Cons: [short cons]
+- C. [option]
+  - Pros: [short pros]
+  - Cons: [short cons]
+
+Reply with: A, B, or C (omit C when only two options are offered).
+```
+
+## Rules
+- Offer 2-3 options maximum.
+- Put the recommended option first in the list, as option A.
+- Base the recommendation on the option with the most meaningful pros and fewest meaningful cons, not on option order alone.
+- State the recommendation and the reason before the options.
+- Keep pros and cons to one line each.
+- Never ask two decisions in one response.
+- Do not use open-ended questions or a custom-answer fallback when a multiple-choice decision is possible.
+- Never invent a standalone CONFIRM phase — confirmation lives in REVIEW.
+- If the answer changes the plan scope, return to PLAN before proceeding.

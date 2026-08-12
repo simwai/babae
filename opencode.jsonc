@@ -1,0 +1,42 @@
+{
+  // opencode-native config for the Baba prompt system.
+  // Inert for other agents (Claude Code, Cursor, Codex) — AGENTS.md + system/
+  // remain the portable copy-paste unit. This file only affects opencode.
+  "$schema": "https://opencode.ai/config.json",
+
+  // Guarantees bootstrap.txt is in every opencode session without relying on
+  // the model choosing to read it. Mirrors the AGENTS.md startup instruction.
+  "instructions": ["AGENTS.md", "system/bootstrap.txt"],
+
+  // MCP servers mirror the fallback tiers in AGENTS.md, adapted to opencode's
+  // schema. Note: opencode interpolates {env:VAR}, NOT ${VAR}.
+  // If EXA_API_KEY is absent, remove the exa entry rather than shipping a
+  // server that fails to start.
+  "mcp": {
+    // Tier 1 — no keys required
+    "context7": {
+      "type": "remote",
+      "url": "https://mcp.context7.com/mcp"
+    },
+    "tavily": {
+      "type": "local",
+      "command": ["npx", "-y", "tavily-mcp"]
+    },
+    "playwright": {
+      "type": "local",
+      "command": ["npx", "-y", "@playwright/mcp@latest"]
+    },
+    // Tier 2 — requires env key
+    "exa": {
+      "type": "remote",
+      "url": "https://mcp.exa.ai/mcp",
+      "headers": { "x-api-key": "{env:EXA_API_KEY}" }
+    },
+    // Remote OAuth — no key, one-time browser consent via `opencode mcp auth trello`
+    "trello": {
+      "type": "remote",
+      "url": "https://mcp.trello.com/v1",
+      "oauth": {}
+    }
+  }
+}
