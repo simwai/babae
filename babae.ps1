@@ -1207,10 +1207,15 @@ function Build-EditorRowContent([int]$rowIndex, [int]$screenWidth, [int]$textWid
   $sb = [System.Text.StringBuilder]::new()
   [void]$sb.Append($gutter)
   [void]$sb.Append($bg)
+  $lineHasBreak = ($lineOff + $fullLine.Length -lt $editorState.TextBuffer.Length -and $editorState.TextBuffer[$lineOff + $fullLine.Length] -eq "`n")
   for ($ci = 0; $ci -lt $textWidth; $ci++) {
-    $absOff = $lineOff + $ci + $visibleStart
+    $lineCharOffset = $ci + $visibleStart
+    $hasTextCharacter = $lineCharOffset -lt $fullLine.Length
+    $absOff = $lineOff + $lineCharOffset
     $ch = if ($ci -lt $slice.Length) { [string]$slice[$ci] } else { ' ' }
-    $inSel = $editorState.IsSelectionActive -and $absOff -ge $selStart -and $absOff -lt $selEnd
+    $isLineBreakCell = -not $hasTextCharacter -and $lineCharOffset -eq $fullLine.Length -and $lineHasBreak
+    $selectionOffset = if ($isLineBreakCell) { $lineOff + $fullLine.Length } else { $absOff }
+    $inSel = ($hasTextCharacter -or $isLineBreakCell) -and $editorState.IsSelectionActive -and $selectionOffset -ge $selStart -and $selectionOffset -lt $selEnd
     $rulerHere = ($rulerCol -ge 0 -and ($ci + $visibleStart) -eq $rulerCol)
 
     $tokenType = $null
