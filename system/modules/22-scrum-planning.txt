@@ -6,7 +6,7 @@ supplies a goal or project spec instead of a file or module.
 
 ## Optionality routing
 
-- User supplies a concrete target (file, module, or code snippet) at START -> **direct mode**.
+- User supplies a concrete target (file, module, or code snippet) at START -> **skip upstream planning**.
   Skip the entire upstream pipeline. Enter `CHECKLIST` as before. This pipeline never activates.
 - User supplies a goal, feature request, or project spec without a concrete target -> **full mode**.
   Enter `INTAKE` first.
@@ -66,6 +66,8 @@ Allowed only if:
 
 Unlocks `BACKLOG` only if goal and at least one success criterion are recorded;
 milestones default to a single catch-all milestone when the user supplies none.
+`Target repo` defaults to the agent's current working directory; ask for a path
+only when the repo is genuinely outside the workspace (module 32).
 
 ```txt
 [PHASE: INTAKE]

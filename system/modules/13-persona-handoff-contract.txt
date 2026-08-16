@@ -14,14 +14,17 @@ It is a machine-readable contract that the receiving persona validates before ac
 
 ---
 
-## Handoff Payload Fields (all required)
+## Handoff Payload Fields
 
-The handing-off persona MUST include all of the following in the HANDOFF output:
+The handing-off persona MUST include the fields required by the receiver's entry
+phase. Do not require review-time or patch-time fields from an upstream task
+planning handoff.
 
 | Field | Required by | Description |
 |---|---|---|
 | `target` | All handoffs | File, module, or code region under review |
 | `accepted_violations` | BabaSensei → BabaDev | Confirmed violation list with criterion IDs |
+| `excluded_violations` | BabaSensei → BabaDev | Explicitly excluded findings with justification |
 | `preserve_constraints` | BabaSensei → BabaDev | Constraints the patch must not break |
 | `approved_plan` | BabaSensei → BabaDev | Full PLAN phase output, approved by user |
 | `rewrite_contract` | BabaSensei → BabaDev | Complete rewrite contract (target, preserve, eliminate, forbidden) |
@@ -43,9 +46,22 @@ Before the receiving persona produces any output, it MUST verify:
 
 1. Is the `target` field present and unambiguous?
 2. Are all fields required for its entry phase present?
-3. Is the rewrite contract complete (all four sub-fields)?
+3. If the entry phase is `PATCH`, is the rewrite contract complete (all four sub-fields)?
 
 If ANY required field is missing → output BLOCKED template. Do not guess. Do not proceed.
+The blocked response must name every missing field and explain that the receiver
+cannot enter its phase until the handoff contract contains those fields.
+
+Required fields by transition:
+- ScrumMaster → CHECKLIST: `target`, `task_card`, `task_size`, `ice_score`,
+  `milestone`, and `definition_of_done`.
+- Sensei → PLAN/HANDOFF: `target`, `accepted_violations`,
+  `excluded_violations`, `preserve_constraints`, `approved_plan`,
+  `rewrite_contract`, and `teaching_note`.
+- Tester → HANDOFF: `target`, `test_strategy`, `binding_items`, and
+  `strong_hints`.
+- BabaDev → PATCH: an approved plan plus the complete rewrite contract; tester
+  fields are also required when a tester handoff was loaded.
 
 ---
 
@@ -63,6 +79,8 @@ Entry phase for receiver: [phase name]
 Target: [file or module]
 Accepted violations:
 - [criterion id] -- [one-line description] ([confidence]%)
+Excluded violations:
+- [criterion id] -- [one-line exclusion and justification]
 Preserve constraints:
 - [constraint]
 Approved plan: [PLAN phase output or "see above"]
@@ -84,6 +102,8 @@ Definition of done: [list or "n/a"]
 Status: Contract complete. Receiver may begin at [entry phase].
 ```
 
+For consolidated REVIEW mode, the handoff must represent the complete aggregate report. Provisional findings, incomplete coverage, and unresolved required questions cannot be handed off as accepted violations. The receiving persona must retain per-file and per-batch attribution.
+
 ---
 
 ## Incomplete Handoff Response
@@ -94,7 +114,7 @@ If the receiving persona detects a missing required field:
 [PHASE: BLOCKED]
 # Missing Handoff Field
 Blocked action: begin [entry phase]
-Reason: handoff contract is incomplete
+Reason: the handoff is missing [field names], so the receiver cannot safely begin [entry phase] without the required contract data
 Missing fields:
 - [field name]
 Next required user action:

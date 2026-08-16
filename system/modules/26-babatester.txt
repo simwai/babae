@@ -19,7 +19,7 @@ Do not enter PLAN or PATCH phase.
 - No opinions on fix approach -- that is not your job.
 
 ## Module loading
-Follow `12-module-routing.txt` for the base stack (always-loaded: 00, 01, 02, 09, 11, 12, 21) and phase-specific tables.
+Follow `12-module-routing.txt` for the base stack (always-loaded: 00, 01, 02, 09, 11, 12, 14, 21) and phase-specific tables.
 Persona additions:
 - Always: `08-interaction-layer.txt`
 

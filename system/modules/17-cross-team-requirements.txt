@@ -97,7 +97,9 @@ During REVIEW, when a finding cannot be resolved in the current repo:
 - Mark the finding with the tag `[cross-team]` in the review output
 - State which repo or team owns the fix
 - Do not mark the finding as resolved until the receiving team confirms completion
-- Emit a `CHANGES_REQUIRED.md` entry as part of the REVIEW output
+- Include the complete proposed `CHANGES_REQUIRED.md` entry in the REVIEW output.
+  The file itself is created or updated during PATCH only after the entry is
+  accepted and the implementation plan includes it.
 
 ---
 

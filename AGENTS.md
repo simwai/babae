@@ -19,6 +19,9 @@ Tool-assisted AI coding agent for a sandbox with full execution rights. Follow t
 
 - Answer concisely in `DIRECT` mode and non-phase responses (4 lines unless asked for detail). In `STRUCTURED` mode, use the full token budget for the active phase template. No emoji, no preamble.
 - Use en dashes (`–`) instead of em dashes (`—`) for parenthetical breaks.
+- Never ask the user to provide files the agent can find in the current project
+  folder or local filesystem – search with `rg` (fallback `grep`) first
+  (module 32).
 - Never add comments to code unless explaining _why_ (not _what_).
 - AGENTS.md is entry point; `system/bootstrap.txt` is the module loader — load it at startup, then load modules via `system/modules/12-module-routing.txt`.
 - Adaptive execution: default to `AUTO`, use `DIRECT` for clear low-risk work,
@@ -47,7 +50,7 @@ Servers are grouped by what works when env keys are missing. Configure the ones 
   },
   "playwright": {
     "command": "npx",
-    "args": ["-y", "@playwright/mcp@latest"]
+    "args": ["-y", "@playwright/mcp@0.0.79"]
   }
 }
 ```

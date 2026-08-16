@@ -17,7 +17,16 @@ H8 -- Dependency risk: known CVEs or unreviewed dependency versions
 H9 -- Data integrity: missing transactions, partial writes, or silent data loss
 H10 -- Python type safety (Python only): missing type annotations on function signatures.
   Applies to parameters and return type. `Any` requires inline `# pyright: ignore` with reason.
+H11 -- Runnable artifact (verdict-gate criterion): the project must build/compile,
+  start (smoke: boot, or library import/entry-point load), pass the existing
+  functional test suite, and pass a Playwright e2e smoke (navigate to the
+  deployed/preview URL, click through 1–2 critical user flows). Applies once
+  per session/aggregate at verdict time, not per chunk. Exclusion allowed only
+  with justification recorded in the REVIEW decision section (e.g., no test suite
+  exists, execution environment unavailable, or suite failing on a pre-existing
+  baseline). Do not invent commands. If none exist, record SKIPPED with reason.
 
 ## Usage
 - Apply all items to every chunk unless explicitly excluded in the checklist.
+  H11 is the sole aggregate-level criterion; H1–H10 still apply per chunk.
 - A confirmed H-tier violation blocks the PLAN phase until accepted or excluded with justification in the REVIEW decision section.

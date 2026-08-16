@@ -18,16 +18,27 @@ Allowed when:
 
 Must contain:
 - blocked action
-- reason
+- reason – a non-empty, specific explanation that names the missing prerequisite or failed condition
 - needed-now list
 - smallest next required user action
+
+The `Reason` field is mandatory. It must not be blank, placeholder-only, or a
+generic statement such as "cannot proceed" or "missing information". It must
+explain why the blocked action cannot proceed and identify the prerequisite that
+is missing or the condition that failed.
+
+!!! Before emitting `BLOCKED` for a missing file, path, version, or scope
+input, perform a filesystem search (`rg`, fallback `grep`, plus file-listing and
+read tools – module 32) and record the search in the `Reason`. The `needed-now`
+list and `smallest next required user action` must never request files, paths,
+versions, or snippets discoverable in the local filesystem.
 
 ```txt
 [PHASE: BLOCKED]
 
 # Missing Information
 Blocked action: [action]
-Reason: [why blocked]
+Reason: [specific missing prerequisite or failed condition and why it blocks the action]
 Needed now:
 - [item 1]
 - [item 2]
@@ -170,6 +181,13 @@ Unlocks next phase only if checklist artifact exists with:
 - soft-tier section
 - batch log
 - pending verdict
+- every `[ ]` checkbox flipped to `[x]`, matching its status field (`reviewing` -> `complete`, `pending` -> `reviewed`)
+
+A `[x]` is only valid when the matching status field reflects completed work; a checkbox marked
+`[x]` for work still `pending` is a false tick and a protocol breach.
+
+When `DOCS` is skipped, the next response opens `REVIEW` directly; the skip is recorded in the docs
+log and requires no user confirmation.
 
 ```txt
 [PHASE: CHECKLIST]
@@ -187,12 +205,20 @@ Pre-review docs log:
 - [ ] Library / version / URL recorded
 - [ ] Changelog checked for last 2 major versions when relevant
 - [ ] Unknowns explicitly called out
+Docs phase: [needed | skipped] -- [one-line reason]
 
 Hard tier:
-- [ ] H1 - [ ] H10
+- [ ] H1 - [ ] H11
 
 Soft tier:
 - [ ] S1 - [ ] S12
+
+Verification:
+- Build: pending -- [command]
+- Smoke: pending -- [command]
+- Functional suite: pending -- [command]
+- Playwright e2e smoke: pending -- [command] (navigate + click key flows)
+- Exclusion plan for unavailable checks: [none | justification]
 
 Batch log:
 (empty -- to be filled)
@@ -213,6 +239,10 @@ Unlocks `REVIEW` only if docs evidence contains:
 - official source URL
 - changelog window checked status when relevant
 - short review-impact note
+
+"Unresolved version" applies only after the repo's manifests, lockfiles, and
+imports were checked with `rg` (fallback `grep`) and file tools (module 32);
+never ask the user to supply a version the repo declares.
 
 ```txt
 [PHASE: DOCS]
@@ -238,6 +268,7 @@ Allowed only if:
 - checklist artifact with file inventory exists
 - current file and batch are available (first file, first batch if starting fresh)
 - docs evidence exists when docs phase is required
+- review mode is recorded as `interactive` or `consolidated`
 
 !!! REVIEW owns confirmation. There is no standalone CONFIRM phase.
 
@@ -247,22 +278,40 @@ Unlocks `PLAN` (or BabaTester `TEST_STRATEGY`) only if the response contains:
 - open questions presented as separate multiple-choice decision blocks, with 2-3 options maximum per question
 - likely passes list
 - decision section with accepted violations, disputed violations, and constraints to preserve
+- verification results recorded (Build, Smoke, Functional suite, Playwright e2e smoke), or H11 explicitly excluded with justification in the decision section
 - and the user explicitly confirmed that decision section
 
-Each REVIEW response covers one batch from one file. After the user confirms a batch, advance to the next batch (or the next file when the current file is exhausted). When all files are reviewed, aggregate all confirmed violations and present them before transitioning to PLAN.
+Interactive mode: each REVIEW response covers one batch from one file. After the user confirms a batch, advance to the next batch (or the next file when the current file is exhausted).
+
+Consolidated mode: inspect every file and batch in order, recording coverage and findings internally. Do not request intermediate confirmation. Emit one final REVIEW response after all units are complete, using `Batch: AGGREGATE – all files complete`. Findings remain provisional until the user confirms the aggregate decision section. A scope-changing question, missing evidence, read failure, or incomplete batch blocks the aggregate report instead of being silently deferred.
+
+When all files are reviewed in either mode, the final REVIEW output must contain the aggregate violations and the REVIEW decision section before transitioning to PLAN.
+
+A finding recorded at confidence <= 70% must first pass the bounded validation
+loop (module 31): up to 3 distinct-fingerprint validation passes, run without
+user input. Record the loop in the template below. The loop does not replace
+user confirmation of the decision section; a still-low-confidence finding lands
+in the decision section as disputed.
 
 ```txt
 [PHASE: REVIEW]
 
 # Multi-file progress
 Reviewed: [X/Y] files -- [Z] batches complete
+Review mode: [interactive|consolidated]
 
 # Findings
-File: [file path]
-Batch: [lines X-Y or FULL] ([N] of [M] for this file)
+File: [file path or ALL FILES]
+Batch: [lines X-Y or FULL or AGGREGATE – all files complete] ([N] of [M] for this file, when applicable)
 
-Confirmed-looking violations:
+Confirmed-looking violations (provisional until the decision section is confirmed):
 - [criterion id] -- [line/range] -- [one-sentence failure] ([confidence]%)
+
+Validation loop (run when any finding is at confidence <= 70%):
+- Trigger: [criterion id] -- [confidence]%
+- Passes run: [fingerprint 1] -> [result] / [fingerprint 2] -> [result] / [fingerprint 3] -> [result] (or "terminated early: no new evidence at pass N")
+- Final confidence: [X]%
+- Terminal classification: [confirmed | disputed]
 
 Open questions:
 - Question: [short question]
@@ -283,6 +332,13 @@ Likely passes:
 Cross-team requirements (if any):
 - [repo/service] -- [priority] -- [short description] (see CHANGES_REQUIRED.md)
 
+# Verification
+Build: PASS|FAIL|SKIPPED -- [command] -- [note]
+Smoke: PASS|FAIL|SKIPPED -- [command] -- [note]
+Functional suite: PASS|FAIL|SKIPPED -- [command] -- [note]
+Playwright e2e smoke: PASS|FAIL|SKIPPED -- [command] -- [note] (navigate + click key flows; uses MCP playwright server from fallback ladder)
+Do not invent commands. If none exist, record SKIPPED with reason.
+
 # Decision Needed
 Please confirm:
 - Accepted violations: [list]
@@ -290,7 +346,7 @@ Please confirm:
 - Constraints to preserve: [list]
 
 Next batch:
-- [file path] -- [lines X-Y or FULL] -- [next batch, or "all files complete — aggregate violations and proceed to PLAN"]
+- [file path] -- [lines X-Y or FULL] -- [next batch, or "all files complete — confirm aggregate decision before PLAN"]
 ```
 
 ## `PLAN`
@@ -345,7 +401,8 @@ A `PATCH` response is valid only if it contains:
 - rewrite contract
 - patch output
 - compliance audit
-- verification section (diff inspected; relevant project checks run or explicitly unavailable)
+- verification section (diff inspected; per-edit lint gate run with fixes applied; relevant project checks run or explicitly unavailable)
+- commit/push gate outcome when the session made file edits (module 33)
 
 ```txt
 [PHASE: PATCH]
@@ -371,8 +428,14 @@ Forbidden in patch:
 
 # Verification
 - Diff inspected: yes/no -- [summary]
+- Lint gate (per edit step): PASS/FAIL/SKIPPED -- [command] -- [results]
 - Checks run: [commands] or none available
 - Results: PASS/FAIL/SKIPPED -- [notes]
+
+# Commit/Push Gate
+- Decision: A/B/C or N/A (no edits) -- [user answer]
+- Commit: [sha] or SKIPPED -- [subject]
+- Push: [remote] -- [pushed|skipped-duplicate|skipped-detached|failed] or NONE
 ```
 
 ## `FAILURE`

@@ -32,6 +32,9 @@ Load this file at startup per AGENTS.md. This file is a **loader only** — it d
 | MCP invocation | `21-mcp-invocation.txt` |
 | Session state | `19-session-state.txt` |
 | Execution mode routing | `30-execution-modes.txt` |
+| Loop protection | `31-loop-guards.txt` |
+| Filesystem-first discovery | `32-filesystem-first.txt` |
+| End-of-session commit/push gate | `33-commit-and-push-gate.txt` |
 | Database conventions | `20-database-conventions.txt` |
 
 ## Precedence model
@@ -59,3 +62,5 @@ State the conflict briefly when it affects the response.
 - No patch without explicit plan approval and a complete rewrite contract.
   This applies in `STRUCTURED` mode only. `DIRECT` mode follows its own
   verification rules (see `30-execution-modes.txt`).
+- Before any code edit, consult `14-implementation-style.txt` and apply its
+  defaults to the edit.

@@ -15,6 +15,11 @@ ambiguous, or broad task must pause for explicit confirmation or use
 !!! When required information is missing, the model is in `BLOCKED` phase.
 !!! While in `BLOCKED` phase, the response may contain only the `BLOCKED` template from `07-output-contracts.txt`.
 
+!!! Every `BLOCKED` response must include a non-empty, specific `Reason` that
+identifies the missing prerequisite or failed condition and explains why the
+blocked action cannot proceed. A blank, placeholder-only, or generic reason is
+invalid.
+
 The model must not additionally:
 - review code
 - guess missing facts
@@ -58,8 +63,9 @@ The following technologies are **not AI-manageable** in a standard code session
 
    # Stack Compatibility Notice
    Blocked action: enter CHECKLIST with unresolved technology risk
-   Reason: the specification includes technologies that may not be
-   available in a standard code session.
+   Reason: the specification includes technologies that may not be available in a
+   standard code session, so CHECKLIST cannot begin until their availability is
+   confirmed or alternatives are selected.
 
    Flagged technologies:
    - [tech] -- [short problem when unavailable] -> Suggested: [alternative]
@@ -98,11 +104,22 @@ Route on the first input:
 
 Full mode must always produce an approved task card before entering `CHECKLIST`.
 
+When the session's state file (`SESSION_STATE-<session_id>.md`, module 19)
+exists, compare its target, scope, and session_id with the current request
+before restoring any phase, approval, or rewrite contract. A mismatch in any of
+the three starts a fresh session and invalidates the old approval for the new
+request. A legacy file (no `session_id`) is always a mismatch for approval
+purposes.
+
 In `DIRECT` mode, do not emit a phase template. Use `[MODE: DIRECT]`, act on a
 clear low-risk request, inspect the diff, and run relevant checks. If the target
 or expected outcome is unclear, ask the smallest useful question before acting.
 DIRECT mode bypasses the phase model entirely — it does not enter CHECKLIST,
 REVIEW, or PLAN.
+
+The ScrumMaster phrase "direct mode" for a concrete target means "skip the
+optional upstream planning pipeline". It does not mean execution `DIRECT` and
+does not bypass `CHECKLIST`, `REVIEW`, or `PLAN`.
 
 ### `INTAKE`
 Required inputs:
@@ -146,6 +163,8 @@ Required inputs:
 Unblock rule:
 `BLOCKED -> CHECKLIST` is allowed only when the target scope is known (or defaulted), and review scope and language are either known or explicitly obvious.
 When the target is a directory or glob, the system must enumerate all matching files into a file inventory before proceeding.
+Before emitting `BLOCKED` for a missing target, search the filesystem with `rg`
+(fallback `grep`) and file-listing tools (module 32).
 
 ### `DOCS`
 Required inputs:
@@ -156,16 +175,23 @@ Required inputs:
 Unblock rule:
 `BLOCKED -> DOCS` is allowed only when the in-scope dependency is named and the version/evidence fields are either filled or explicitly marked unresolved for user follow-up.
 
+!!! Dependency names and versions are read from the repo: manifests, lockfiles,
+and imports (module 32). "Unresolved" means the repo does not declare the fact,
+never an invitation to ask the user for it.
+
 ### `REVIEW`
 Required inputs:
 - current chunk or review unit
 - prior checklist artifact
 - docs evidence if docs are in scope
+- review mode: `interactive` or `consolidated`; default is `interactive` when unspecified
 
 Unblock rule:
 `BLOCKED -> REVIEW` is allowed only when the current chunk exists and every prerequisite artifact required by the review path already exists.
 
 REVIEW also owns the confirmation decision. Before leaving REVIEW, the response must include accepted violations, disputed violations, and preservation constraints with enough specificity for the user to confirm.
+
+In `consolidated` mode, intermediate user prompts are suppressed, not intermediate evidence collection. Every file and batch must be recorded, including units with no findings. Questions that change scope, invalidate evidence, or affect the remaining scan must block immediately; other open questions may be collected for the final report. No finding is accepted before the aggregate decision section is explicitly confirmed.
 
 ### `PLAN`
 Required inputs:
@@ -186,6 +212,10 @@ Required inputs:
 ## Decision format
 
 When user choice is genuinely required and the phase is not blocked, ask with this structure:
+
+Decision prompts cover user-owned choices only: scope, findings confirmation, plan approval, and
+cadence. Deterministic phase skips (`DOCS` out of scope, upstream pipeline not applicable) are
+recorded and auto-advanced; they are never framed as decision prompts.
 
 ```txt
 [PHASE: <current phase>]
@@ -209,8 +239,13 @@ Reply with: A, B, or C (omit C when only two options are offered).
 
 ## Smallest-request rule
 
-If inputs are missing, ask for the smallest useful unit first.
-Prefer one file, one function, one version, or one dependency list over requesting the whole repository.
+!!! Never ask the user to provide files, paths, versions, or snippets that a
+filesystem search can find (module 32). Search first: `rg` for content, plain
+`grep` only as fallback, plus file-listing and read tools.
+
+If inputs are missing after the search, ask for the smallest useful unit first.
+Never request a file, function, version, or dependency list that exists on disk;
+request only what only the user knows.
 
 Decision rules:
 - Offer no more than three options.

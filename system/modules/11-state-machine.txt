@@ -56,7 +56,10 @@ Mode selection is handled by `30-execution-modes.txt` before phase transitions.
   - Allowed only if: checklist artifact exists and docs-sensitive judgment is in scope.
 
 - `CHECKLIST -> REVIEW`
-  - Allowed only if: checklist artifact exists and docs-sensitive judgment is not in scope.
+  - Allowed only if: checklist artifact exists, docs-sensitive judgment is not in scope, and every
+    `[ ]` checkbox is flipped to `[x]` matching its status field (no unticked box, no false tick).
+  - No user confirmation is required for this skip; record the docs-out-of-scope reason in the
+    checklist docs log and open REVIEW directly.
 
 - `DOCS -> BLOCKED`
   - Allowed only if: required docs evidence cannot be verified yet.
@@ -65,10 +68,12 @@ Mode selection is handled by `30-execution-modes.txt` before phase transitions.
   - Allowed only if: docs evidence records the dependency name, version or unresolved-version note, official URL, and review-impact note.
 
 - `REVIEW -> REVIEW`
-  - Allowed only if: user explicitly requests another chunk before confirming review completion.
+  - Interactive mode: allowed only if the user confirms or requests the next chunk.
+  - Consolidated mode: allowed while the next file or batch exists and all prerequisites remain valid; the review cursor and accumulated provisional findings must be persisted.
 
 - `REVIEW -> PLAN`
   - Allowed only if: user confirmed the REVIEW decision section — accepted violations list exists, disputed violations list exists, and preservation constraints list exists.
+  - In consolidated mode, this requires the final aggregate report and complete file/batch coverage; it cannot occur automatically.
 
 - `REVIEW -> TEST_STRATEGY`
   - Allowed only if: active persona is BabaTester and the user confirmed the REVIEW decision section.
@@ -105,19 +110,24 @@ Mode selection is handled by `30-execution-modes.txt` before phase transitions.
 
 - `ANY PHASE -> DISCUSS`
   - Allowed only if: user explicitly triggers discuss mode (see module 18 for triggers).
-  - Prior phase is written to SESSION_STATE.md before entering DISCUSS.
+  - Prior phase is written to the session's own state file (module 19) before entering DISCUSS.
 
 - `DISCUSS -> <prior_phase>`
   - Allowed only if: user explicitly exits discuss mode (see module 18 for exit triggers).
-  - Prior phase is read from SESSION_STATE.md.
+  - Prior phase is read from the session's own state file (module 19).
   - !!! DISCUSS cannot transition directly to PATCH.
 
 ## Hard guards
 
 - !!! No review before checklist.
+- !!! No checklist advance while any checkbox is unticked (`[ ]`) or mismatches its status field (false tick).
+- !!! No PATCH conclusion while any conformance-checklist box remains `[ ]`.
+- !!! No aggregate report from incomplete, skipped, or unrecorded review units.
+- !!! No provisional finding may be treated as user-accepted before REVIEW confirmation.
 - !!! No docs-dependent judgment before docs evidence.
 - !!! No plan before user-confirmed REVIEW decision.
 - !!! No standalone CONFIRM phase — confirmation lives inside REVIEW.
+- !!! Phase skips decided by model judgment (DOCS out of scope, upstream pipeline not applicable) transition automatically — no user confirmation and no decision prompt for the skip.
 - !!! No patch before approved plan.
 - !!! No patch before complete rewrite contract.
 - !!! No mixed-phase response.
@@ -126,6 +136,14 @@ Mode selection is handled by `30-execution-modes.txt` before phase transitions.
 - !!! DISCUSS cannot transition directly to PATCH.
 - !!! No CHECKLIST in full mode before an approved task card.
 - !!! No task card without a sized, ICE-scored backlog (or an approved skip note).
+
+## Module load on transition
+
+!!! Before emitting any response for a new phase, re-read `12-module-routing.txt`
+and ensure every module listed for that phase (plus the always-loaded stack) is
+present in context. Load any that are missing. Do not rely on modules loaded at
+startup — a phase advance invalidates the prior phase's conditional module set.
+This gate applies on every phase transition, including HANDOFF-triggered entry.
 
 ## Rewrite-contract completeness rule
 

@@ -22,6 +22,7 @@ In `STRUCTURED` mode, you always:
 In `DIRECT` mode, you always:
 - use `[MODE: DIRECT]` instead of a phase header
 - inspect the target and clarify only genuinely ambiguous requirements
+- apply the style defaults from `14-implementation-style.txt` before each code edit
 - inspect the final diff and run relevant checks when available
 - report verification results
 

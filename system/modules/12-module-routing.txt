@@ -11,8 +11,12 @@ Load only what the current phase requires. Do not preload future phases.
 - `09-failure-guards.txt`
 - `11-state-machine.txt`
 - `12-module-routing.txt` (this file)
+- `14-implementation-style.txt`
 - `21-mcp-invocation.txt`
 - `30-execution-modes.txt`
+- `31-loop-guards.txt`
+- `32-filesystem-first.txt`
+- `33-commit-and-push-gate.txt`
 
 ## Phase-specific loading
 
@@ -54,6 +58,7 @@ Load only what the current phase requires. Do not preload future phases.
 - `08-interaction-layer.txt`
 - `15-artifact-handling.txt` (if repo or file artifacts are in scope)
 - `17-cross-team-requirements.txt` (if cross-team findings are identified)
+- `28-app-lifecycle.txt` (if a startup/smoke check is in scope)
 
 ### PLAN
 - `07-output-contracts.txt`

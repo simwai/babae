@@ -31,9 +31,9 @@ server's task operation before setup and verification complete.
   fallback ladder below and record the failure; never treat an untested server
   as ready.
 
-When `SESSION_STATE.md` is active, persist the setup and verification evidence
-in its `MCP Preflight` section. Otherwise keep the ledger in session context and
-report the setup and preflight result when MCP is used.
+When the session's own state file is active (module 19), persist the setup and
+verification evidence in its `MCP Preflight` section. Otherwise keep the ledger
+in session context and report the setup and preflight result when MCP is used.
 
 ## Signal -> tool matrix
 
@@ -59,6 +59,9 @@ report the setup and preflight result when MCP is used.
 
 - If built-in tools (`read`, `grep`, `glob`, `bash`) can answer from local context, do NOT invoke an MCP.
 - One MCP call per evidence gap — no exploratory firehose.
+- Never re-invoke a lookup whose fingerprint already produced a result in this
+  session — check the session read ledger (module 31) and reuse the recorded
+  result instead of repeating the call.
 - Never send secrets, tokens, or proprietary code through remote endpoints (`context7`, `tavily`, `exa`, `trello`) — H1 guard.
 - `playwright` `browser_run_code_unsafe` is RCE-equivalent — trusted sessions only, never run untrusted code.
 
@@ -74,4 +77,7 @@ curl -s "https://www.google.com/search?q=<url-encoded-query>"
 
 1. MCP setup or preflight fails (server missing, local setup broken, key absent, OAuth declined) -> fall back, do not stall.
 2. `curl` to the official source URL or direct web search (above).
-3. If evidence still cannot be verified -> `BLOCKED` / explicit unresolved-version note per module 03. Never guess a version or URL from memory.
+3. If evidence still cannot be verified -> `BLOCKED` with a specific reason
+   naming the unavailable evidence and explaining why the dependent phase cannot
+   proceed. Record the explicit unresolved-version note per module 03. Never
+   guess a version or URL from memory.
