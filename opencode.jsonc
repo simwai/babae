@@ -39,10 +39,6 @@
       "type": "remote",
       "url": "https://mcp.context7.com/mcp"
     },
-    "tavily": {
-      "type": "local",
-      "command": ["npx", "-y", "tavily-mcp@0.2.22"]
-    },
     "playwright": {
       "type": "local",
       "command": ["npx", "-y", "@playwright/mcp@0.0.79"]
