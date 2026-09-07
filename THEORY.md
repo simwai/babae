@@ -20,15 +20,13 @@ By default, terminals operate in **Canonical Mode** (or "cooked" mode). In this 
 
 ## 2. Input Architecture
 
-babae uses a "dual-path" input architecture to ensure it works both in interactive terminal sessions and in automated test environments.
+babae uses a unified raw stdin stream input architecture to ensure consistent, non-blocking input handling across interactive terminal sessions, SSH connections, and automated test environments.
 
-### Path A: Interactive (PowerShell Runspace)
-When running in a normal terminal, babae spawns a background **PowerShell Runspace**. This runspace calls `[Console]::ReadKey($true)` in a loop and pushes the resulting `ConsoleKeyInfo` objects into a `ConcurrentQueue`.
-- **Why?** `ReadKey` is the most reliable way in .NET to get modifier keys (Shift/Ctrl/Alt) and special keys (Home/End) across Windows and Unix.
-- **Async:** Running this in a separate thread prevents the UI from freezing while waiting for input.
+### Raw Stdin Stream & Async Byte Buffering
+Rather than relying on `[Console]::ReadKey` or background runspaces, babae opens standard input directly via `[Console]::OpenStandardInput()`. An asynchronous byte-reader task (`ReadAsync`) non-blockingly drains stdin bytes into an internal byte queue.
 
-### Path B: Redirected (Raw Stdin)
-When babae is piped or run in a test harness (like Pester), `[Console]::ReadKey` often fails or behaves differently. babae detects this via `[Console]::IsInputRedirected` and falls back to reading the raw byte stream from `[Console]::OpenStandardInput()`.
+- **VT/ANSI Escape Sequence Parsing:** Raw bytes are assembled and parsed byte-by-byte to recognize function keys, arrow keys, and control sequences across terminal emulators.
+- **Bracketed Paste Detection:** Stdin byte stream processing unconditionally detects Bracketed Paste Mode (BPM) sentinel frames (`ESC [ 200 ~` and `ESC [ 201 ~`), allowing pasted payloads over SSH to be routed directly to buffer insertion without triggering individual key handling.
 
 ### The Bracketed Paste Fix
 
@@ -54,7 +52,7 @@ babae relies on the following core .NET classes within PowerShell:
 | API Call | Description | Documentation |
 |----------|-------------|---------------|
 | `[Console]::IsInputRedirected` | Checks if stdin is a terminal or a pipe. | [Link](https://learn.microsoft.com/en-us/dotnet/api/system.console.isinputredirected) |
-| `[Console]::ReadKey(true)` | Reads a key without echoing to the screen. | [Link](https://learn.microsoft.com/en-us/dotnet/api/system.console.readkey) |
+| `[Console]::OpenStandardInput()` | Gets the raw input stream for asynchronous byte reading. | [Link](https://learn.microsoft.com/en-us/dotnet/api/system.console.openstandardinput) |
 | `[Console]::OpenStandardOutput()` | Gets the raw output stream for fast writing. | [Link](https://learn.microsoft.com/en-us/dotnet/api/system.console.openstandardoutput) |
 | `[Console]::WindowWidth / Height` | Gets the current terminal dimensions. | [Link](https://learn.microsoft.com/en-us/dotnet/api/system.console.windowwidth) |
 | `[Console]::OutputEncoding` | Ensures UTF-8 support for icons and emojis. | [Link](https://learn.microsoft.com/en-us/dotnet/api/system.console.outputencoding) |

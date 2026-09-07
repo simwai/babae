@@ -43,7 +43,7 @@ Its primary reason for existence: most terminal editors misbehave when pasting i
 - **Zero Dependencies**: One file. `pwsh ./babae.ps1`. Done.
 - **SSH-Safe Paste**: Bracketed paste mode (BPM) support across both interactive and redirected stdin paths. Right-click paste over SSH does not staircase — ever. See [The Staircase Paste Fix](#the-staircase-paste-fix).
 - **ANSI TUI Rendering**: Low-flicker frame rendering via a shadow row buffer and direct stdout stream writes. Only changed rows are redrawn.
-- **Four Dark Themes**: babae dark, Catppuccin Mocha, Catppuccin Frappe, GitHub Dark. Cycle with `^T`.
+- **Five Built-in Themes**: babae dark, Catppuccin Mocha, Catppuccin Frappe, GitHub Dark, Catppuccin Latte (high contrast). Cycle with `^T`.
 - **Undo / Redo**: Snapshot-based undo stack (up to 200 entries) with `^Z` / `^Y`.
 - **Incremental Search**: Live highlighting across the buffer with `^F`.
 - **Cross-Platform Clipboard**: `^C` / `^V` via `xclip` / `xsel` / `wl-copy` on Linux (X11 and Wayland), `pbcopy` / `pbpaste` on macOS, `System.Windows.Forms.Clipboard` on Windows.
@@ -121,14 +121,14 @@ pwsh ./babae.ps1 myfile.txt -Theme mocha
 | `^C` | Copy selection (or current line) |
 | `^V` | Paste from clipboard |
 | `^T` | Cycle theme |
-| `^H` | Help |
+| `^F1` | Help |
 | `Arrow keys` | Move cursor |
 | `Shift+Arrows` | Extend selection |
 | `Home` / `End` | Start / end of line |
 | `PgUp` / `PgDn` | Scroll by screen |
 | `Backspace` / `Del` | Delete character |
-| `Enter` | New line with auto-indent |
-| `Tab` | Insert indent (space or tab per `.editorconfig`) |
+| `Enter` | New line |
+| `Tab` | Insert indent / autocomplete |
 | `Esc` | Cancel search / clear selection |
 | `RightClick` | Paste from clipboard (Windows only) |
 
@@ -140,6 +140,7 @@ pwsh ./babae.ps1 myfile.txt -Theme mocha
 | `mocha` | Catppuccin Mocha |
 | `frappe` | Catppuccin Frappe |
 | `github-dark` | GitHub Dark |
+| `latte-contrast` | Catppuccin Latte (high contrast) |
 
 ## Language Detection
 
@@ -152,9 +153,17 @@ babae automatically displays a language label in the header bar based on the ope
 | `.ts`, `.tsx` | TypeScript |
 | `.js`, `.jsx` | JavaScript |
 | `.py` | Python |
-| `.json` | JSON |
+| `.json`, `.jsonc`, `.jsonl` | JSON / JSONC |
 | `.md` | Markdown |
 | `.sh`, `.bash` | Bash |
+| `.html`, `.htm` | HTML |
+| `.css` | CSS |
+| `.svg` | SVG |
+| `.yaml`, `.yml` | YAML |
+| `.toml` | TOML |
+| `.java` | Java |
+| `.env` / `*.env` | dotenv |
+| `Dockerfile` | Dockerfile |
 | *(anything else)* | Plain Text |
 
 ## The Staircase Paste Fix
