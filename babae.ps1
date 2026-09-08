@@ -7,18 +7,18 @@
     syntax highlighting, horizontal scrolling, autocomplete.
 .NOTES
     PS installation: https://learn.microsoft.com/en-us/powershell/scripting/install/install-ubuntu?view=powershell-7.6
-    babae installation: curl -O https://gitlab.com/simwai/babae/-/raw/main/babae.ps1
+    babae installation: winget install simwai.babae (Windows) or curl -O https://gitlab.com/simwai/babae/-/raw/main/babae.ps1
 .PARAMETER Path
     Optional file to open on launch.
 .PARAMETER Theme
-    Starting theme: dark (default) | mocha | frappe | github-dark | latte-contrast
+    Starting theme: dark (default) | mocha | frappe | github-dark | latte
 .EXAMPLE
     pwsh ./babae.ps1
     pwsh ./babae.ps1 myfile.txt -Theme mocha
 #>
 param(
   [Parameter(Position = 0)][string]$Path,
-  [ValidateSet("dark", "mocha", "frappe", "github-dark", "latte-contrast")]
+  [ValidateSet("dark", "mocha", "frappe", "github-dark", "latte")]
   [string]$Theme = "dark"
 )
 
@@ -132,7 +132,7 @@ function New-ThemeFromOverride([hashtable]$overrides, [string]$displayName) {
   return $theme
 }
 
-$script:availableThemeNames = @("dark", "mocha", "frappe", "github-dark", "latte-contrast")
+$script:availableThemeNames = @("dark", "mocha", "frappe", "github-dark", "latte")
 $script:themeDefinitions = @{
   "dark"           = New-ThemeFromOverride @{} "babae dark"
   "mocha"          = New-ThemeFromOverride @{
@@ -195,7 +195,7 @@ $script:themeDefinitions = @{
     foregroundRuler             = "38;2;110;118;129"
     displayName                 = "GitHub Dark"
   } "GitHub Dark"
-  "latte-contrast" = New-ThemeFromOverride @{
+  "latte" = New-ThemeFromOverride @{
     background                  = "48;2;239;241;245"
     backgroundLine              = "48;2;228;230;237"
     backgroundGutter            = "48;2;220;224;232"
@@ -223,8 +223,8 @@ $script:themeDefinitions = @{
     foregroundOperator          = "38;2;14;110;114"
     foregroundPunctuation       = "38;2;85;88;104"
     foregroundConstant          = "38;2;178;36;54"
-    displayName                 = "Catppuccin Latte (high contrast)"
-  } "Catppuccin Latte (high contrast)"
+    displayName                 = "Catppuccin Latte"
+  } "Catppuccin Latte"
 }
 $script:currentThemeIndex = [Math]::Max(0, $script:availableThemeNames.IndexOf($Theme))
 function Get-ThemeColor([string]$key) {
@@ -1452,17 +1452,17 @@ function Handle-EditingKey([ConsoleKeyInfo]$ki) {
       $prefix = Get-WordPrefixAtCursor
       if ($prefix -ne '' -and ($null -eq $editorState.AutocompleteMatches)) {
         $words = Get-AllWordsInBuffer
-        $matchedWords = $words | Where-Object { $_ -like "$prefix*" } | Sort-Object -Unique
+        $matchedWords = @($words | Where-Object { $_ -like "$prefix*" } | Sort-Object -Unique)
         if ($matchedWords.Count -eq 1) {
           Push-UndoSnapshot
-          Insert-TextAtCursor $matchedWords[0].Substring($prefix.Length)
+          Insert-TextAtCursor ([string]$matchedWords[0]).Substring($prefix.Length)
           $editorState.AutocompleteMatches = $null
         } elseif ($matchedWords.Count -gt 1) {
-          $editorState.AutocompleteMatches = @($matchedWords)
+          $editorState.AutocompleteMatches = $matchedWords
           $editorState.AutocompleteIndex = 0
           $editorState.AutocompleteBaseOffset = $editorState.CursorOffset - $prefix.Length
           Push-UndoSnapshot
-          Replace-CurrentWord $matchedWords[0]
+          Replace-CurrentWord [string]$matchedWords[0]
         } else { Push-UndoSnapshot; Insert-TextAtCursor (Get-IndentationString) }
       } elseif ($null -ne $editorState.AutocompleteMatches) {
         $editorState.AutocompleteIndex = ($editorState.AutocompleteIndex + 1) % $editorState.AutocompleteMatches.Count

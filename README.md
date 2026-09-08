@@ -19,6 +19,7 @@
 - [Environment Setup Guide](#environment-setup-guide)
   * [1. Install PowerShell 7+](#1-install-powershell-7)
   * [2. Download babae](#2-download-babae)
+  * [2b. Install via winget (Windows)](#2b-install-via-winget-windows)
 - [Global Install](#global-install)
 - [Usage Guide](#usage-guide)
   * [Keybindings](#keybindings)
@@ -78,6 +79,17 @@ curl -O https://gitlab.com/simwai/babae/-/raw/main/babae.ps1
 ```
 
 That is the entire installation.
+
+### 2b. Install via winget (Windows)
+
+```powershell
+winget install simwai.babae
+```
+
+The portable package contains the launcher, `babae.ps1`, and `LICENSE`. It requires
+PowerShell 7+ on `PATH`.
+
+See [WINGET.md](WINGET.md) for package publishing and CI setup.
 
 ## Global Install
 
