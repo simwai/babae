@@ -44,7 +44,7 @@ Its primary reason for existence: most terminal editors misbehave when pasting i
 - **Zero Dependencies**: One file. `pwsh ./babae.ps1`. Done.
 - **SSH-Safe Paste**: Bracketed paste mode (BPM) support across both interactive and redirected stdin paths. Right-click paste over SSH does not staircase — ever. See [The Staircase Paste Fix](#the-staircase-paste-fix).
 - **ANSI TUI Rendering**: Low-flicker frame rendering via a shadow row buffer and direct stdout stream writes. Only changed rows are redrawn.
-- **Five Built-in Themes**: babae dark, Catppuccin Mocha, Catppuccin Frappe, GitHub Dark, Catppuccin Latte (high contrast). Cycle with `^T`.
+- **Five Built-in Themes**: babae dark, Catppuccin Mocha, Catppuccin Frappe, GitHub Dark, Catppuccin Latte. Cycle with `^T`.
 - **Undo / Redo**: Snapshot-based undo stack (up to 200 entries) with `^Z` / `^Y`.
 - **Incremental Search**: Live highlighting across the buffer with `^F`.
 - **Cross-Platform Clipboard**: `^C` / `^V` via `xclip` / `xsel` / `wl-copy` on Linux (X11 and Wayland), `pbcopy` / `pbpaste` on macOS, `System.Windows.Forms.Clipboard` on Windows.
@@ -152,7 +152,7 @@ pwsh ./babae.ps1 myfile.txt -Theme mocha
 | `mocha` | Catppuccin Mocha |
 | `frappe` | Catppuccin Frappe |
 | `github-dark` | GitHub Dark |
-| `latte-contrast` | Catppuccin Latte (high contrast) |
+| `latte` | Catppuccin Latte |
 
 ## Language Detection
 
