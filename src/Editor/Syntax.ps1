@@ -24,6 +24,7 @@ function Get-LanguageFromPath([string]$path) {
       else { 'Plain Text' }
     }
   }
+}
 #endregion
 #region Syntax Rules
 $script:languageSyntaxRules = @{

@@ -10,6 +10,6 @@ Commands:
 Installers:
 - Architecture: x64
   InstallerUrl: https://gitlab.com/api/v4/projects/simwai%2Fbabae/packages/generic/babae/0.1.0/babae-0.1.0.zip
-  InstallerSha256: 90152CEE3536CEA344946EF1058A9B27B9BD08729D935253C74EE035D1F76894
+  InstallerSha256: 51514A0C1301628CF62EA98695805A68AEA166544400CF78A4AB0443AB4CB3A9
 ManifestType: installer
 ManifestVersion: 1.12.0
