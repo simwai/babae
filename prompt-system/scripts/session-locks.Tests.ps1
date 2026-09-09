@@ -1,3 +1,12 @@
+<#
+.SYNOPSIS
+    Regression tests for session-locks.ps1 dependency discovery.
+.DESCRIPTION
+    Guards the importer and forward-import patterns: a consumer that imports
+    the target must appear in Importers, and the target's own imports must
+    appear in Imports. Discovery shells out to rg, which must be on PATH.
+#>
+
 BeforeAll {
     . $PSScriptRoot/session-locks.ps1
 }
