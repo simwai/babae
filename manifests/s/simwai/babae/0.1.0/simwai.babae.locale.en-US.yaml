@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.12.0.schema.json
+PackageIdentifier: simwai.babae
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: simwai
+PackageName: babae
+License: MIT
+ShortDescription: A zero-dependency, SSH-safe TUI editor written in pure PowerShell
+PackageUrl: https://gitlab.com/simwai/babae
+ManifestType: defaultLocale
+ManifestVersion: 1.12.0

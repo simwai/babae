@@ -32,8 +32,7 @@
 BeforeAll {
   $Script:EditorScript = Join-Path $PSScriptRoot 'babae.ps1'
 
-  # ── session helpers ────────────────────────────────────────────────────────
-
+  #region Session Helpers
   function Start-BabaeProcess([string]$filePath) {
     $psi                        = [System.Diagnostics.ProcessStartInfo]::new()
     $psi.FileName               = (Get-Command pwsh -ErrorAction Stop).Source
@@ -43,7 +42,7 @@ BeforeAll {
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError  = $true
     $psi.EnvironmentVariables['TERM']           = 'xterm-256color'
-    $psi.EnvironmentVariables['TERM_PROGRAM']   = 'bitvise'  # closest approximation
+    $psi.EnvironmentVariables['TERM_PROGRAM']   = 'bitvise'
     $psi.EnvironmentVariables['COLORTERM']      = 'truecolor'
     $psi.EnvironmentVariables['BABAE_SKIP_INSTALL'] = '1'
 
@@ -53,7 +52,6 @@ BeforeAll {
     @{ Process = $proc; Stdin = $proc.StandardInput }
   }
 
-  # Write raw bytes to the editor's stdin stream.
   function Send-Bytes($s, [byte[]]$bytes) {
     $s.Stdin.BaseStream.Write($bytes, 0, $bytes.Length)
     $s.Stdin.BaseStream.Flush()
@@ -63,13 +61,11 @@ BeforeAll {
     Send-Bytes $s ([System.Text.Encoding]::UTF8.GetBytes($text))
   }
 
-  # Send a single control byte (Ctrl+X = byte value of letter minus 64).
   function Send-Ctrl($s, [char]$letter) {
     Send-Bytes $s @([byte]([int][char]$letter - [int][char]'A' + 1))
   }
 
-  # Build the raw byte sequence for a bracketed paste.
-  # ESC [ 2 0 0 ~ <payload> ESC [ 2 0 1 ~
+  # BPM frame: ESC[200~ payload ESC[201~
   function New-BpmBytes([string]$text) {
     $norm = $text -replace "`r`n", "`n" -replace "`r", "`n"
     $seq  = "`e[200~$norm`e[201~"
@@ -80,22 +76,19 @@ BeforeAll {
     if (-not $s.Process.WaitForExit($ms)) { $s.Process.Kill() }
   }
 
-  # Save + quit the editor and wait for it to exit.
   function Close-Editor($s) {
-    # Wrap every write in try/catch: if the editor already exited cleanly
-    # (e.g. Ctrl+Q with no unsaved changes), the pipe is gone and writes
-    # throw a broken-pipe error — that is fine, we just stop sending.
     try { Send-Ctrl $s 'S' } catch {}
-    Start-Sleep -Milliseconds 200
+    Start-Sleep -Milliseconds 500
     try { Send-Ctrl $s 'Q' } catch {}
-    Start-Sleep -Milliseconds 200
+    Start-Sleep -Milliseconds 500
     try { Send-Str $s 'Y' } catch {}  # confirm if dirty-quit dialog appears
+    Start-Sleep -Milliseconds 500
     Wait-Editor $s
   }
 }
+#endregion
 
-# ── BPM sequence helper unit tests (no editor process needed) ─────────────────
-
+#region Bpm Helper Tests
 Describe 'BPM byte-sequence helpers' {
 
   It 'produces ESC[200~...ESC[201~ frame' {
@@ -117,16 +110,16 @@ Describe 'BPM byte-sequence helpers' {
     $str | Should -Match ('(?s)' + [regex]::Escape("`e[200~") + '.*line1.*line2.*line3.*' + [regex]::Escape("`e[201~"))
   }
 }
+#endregion
 
-# ── Staircase regression — core ────────────────────────────────────────────────
-
+#region Staircase Regression
 Describe 'Staircase regression: bracketed paste via raw stdin BPM' {
 
   It 'inserts multi-line uniformly-indented text verbatim (no staircase)' {
     $out = [IO.Path]::GetTempFileName()
     try {
       $s = Start-BabaeProcess $out
-      Start-Sleep -Milliseconds 700   # let the editor initialise
+      Start-Sleep -Milliseconds 700
 
       # All lines have exactly 4 leading spaces.
       # Without the fix each \n re-injects those 4 spaces on the next line,
@@ -154,7 +147,6 @@ Describe 'Staircase regression: bracketed paste via raw stdin BPM' {
       $s = Start-BabaeProcess $out
       Start-Sleep -Milliseconds 700
 
-      # Deliberately varying indentation — each line must survive unchanged.
       $payload = "no-indent`n  two-space`n    four-space`n`t`ttabs`nno-indent-again"
       Send-Bytes $s (New-BpmBytes $payload)
       Start-Sleep -Milliseconds 300
@@ -182,7 +174,6 @@ Describe 'Staircase regression: bracketed paste via raw stdin BPM' {
       Send-Bytes $s (New-BpmBytes '')
       Start-Sleep -Milliseconds 200
 
-      # Quit cleanly — no unsaved changes.
       Send-Ctrl $s 'Q'
       Wait-Editor $s
 
@@ -199,7 +190,7 @@ Describe 'Staircase regression: bracketed paste via raw stdin BPM' {
 
       $lines500 = (1..500 | ForEach-Object { "    line $_" }) -join "`n"
       Send-Bytes $s (New-BpmBytes $lines500)
-      Start-Sleep -Milliseconds 600   # give the editor time to process all bytes
+      Start-Sleep -Milliseconds 600
 
       Close-Editor $s
 
@@ -207,12 +198,10 @@ Describe 'Staircase regression: bracketed paste via raw stdin BPM' {
       $lines = ($saved -split "`n") | Where-Object { $_ -ne '' }
 
       $lines.Count | Should -Be 500
-      # Spot-check first, middle, last for correct content and indentation.
       $lines[0]   | Should -Be '    line 1'
       $lines[249] | Should -Be '    line 250'
       $lines[499] | Should -Be '    line 500'
 
-      # Verify no line has more than 4 leading spaces (staircase check).
       foreach ($l in $lines) {
         ($l -match '^( *)') | Out-Null
         $Matches[1].Length | Should -Be 4 -Because "staircase would compound indentation; got: '$l'"
@@ -221,9 +210,9 @@ Describe 'Staircase regression: bracketed paste via raw stdin BPM' {
     } finally { Remove-Item $out -Force -ErrorAction SilentlyContinue }
   }
 }
+#endregion
 
-# ── Normal key input regression guard ─────────────────────────────────────────
-
+#region Normal Key Input
 Describe 'Normal key input still works through raw stdin reader' {
 
   It 'types printable characters correctly' {
@@ -249,8 +238,8 @@ Describe 'Normal key input still works through raw stdin reader' {
       $s = Start-BabaeProcess $out
       Start-Sleep -Milliseconds 700
 
-      Send-Str $s '    foo'                   # type "    foo"
-      Send-Bytes $s @(0x0D)                   # CR = Enter
+      Send-Str $s '    foo'
+      Send-Bytes $s @(0x0D)
       Start-Sleep -Milliseconds 150
 
       Close-Editor $s
@@ -259,8 +248,7 @@ Describe 'Normal key input still works through raw stdin reader' {
       $lines = $saved -split "`n"
 
       $lines[0] | Should -Be '    foo'
-      # Auto-indent: the new line inherits the 4-space indent.
-      # This is CORRECT behaviour — distinct from the staircase bug.
+      # Auto-indent: the new line inherits the 4-space indent (distinct from the staircase bug).
       $lines[1] | Should -Match '^    '
 
     } finally { Remove-Item $out -Force -ErrorAction SilentlyContinue }
@@ -274,21 +262,20 @@ Describe 'Normal key input still works through raw stdin reader' {
 
       Send-Str $s 'abc'
       Start-Sleep -Milliseconds 50
-      Send-Ctrl $s 'Z'    # undo
+      Send-Ctrl $s 'Z'
       Start-Sleep -Milliseconds 50
 
       Close-Editor $s
 
-      # After undoing one char, buffer should have 'ab' (undo steps are per-snapshot).
       $saved = [IO.File]::ReadAllText($out)
       $saved.Trim().Length | Should -BeLessOrEqual 3
 
     } finally { Remove-Item $out -Force -ErrorAction SilentlyContinue }
   }
 }
+#endregion
 
-# ── BPM does not interfere with Ctrl+V (clipboard paste path) ─────────────────
-
+#region Clipboard Paste
 Describe 'Ctrl+V clipboard paste is unaffected' {
 
   It 'Ctrl+V still triggers the clipboard paste path (Paste-Text via GetClipboardText)' {
@@ -300,21 +287,19 @@ Describe 'Ctrl+V clipboard paste is unaffected' {
       $s = Start-BabaeProcess $out
       Start-Sleep -Milliseconds 700
 
-      Send-Ctrl $s 'V'     # Ctrl+V — clipboard will be empty on headless CI
+      Send-Ctrl $s 'V'
       Start-Sleep -Milliseconds 150
 
       Close-Editor $s
 
-      # Should exit cleanly.
       $s.Process.ExitCode | Should -Not -BeNullOrEmpty
 
     } finally { Remove-Item $out -Force -ErrorAction SilentlyContinue }
   }
 }
+#endregion
 
-
-# ── Content verification test ──────────────────────────────────────────────────
-
+#region Content Verification
 Describe 'Content verification' {
 
   It 'saves the exact characters that were input' {
@@ -335,3 +320,4 @@ Describe 'Content verification' {
     } finally { Remove-Item $out -Force -ErrorAction SilentlyContinue }
   }
 }
+#endregion
