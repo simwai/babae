@@ -1,7 +1,18 @@
+<#
+.SYNOPSIS
+    Key dispatch and editing behavior for the editor.
+.DESCRIPTION
+    Maps console key events to editor actions for edit mode, search mode,
+    and save-as mode.
+#>
+
 $ErrorActionPreference = 'Stop'
 
-#region Search Mode Handler
 function Invoke-SearchKey([ConsoleKeyInfo]$ki) {
+  <#
+  .SYNOPSIS
+      Handles key input while the editor is in search mode.
+  #>
   $editorState = Get-EditorState
   switch ($ki.Key) {
     'Escape' { $editorState.EditorMode = 'edit'; $editorState.SearchBuffer = ''; return }
@@ -11,9 +22,11 @@ function Invoke-SearchKey([ConsoleKeyInfo]$ki) {
   }
 }
 
-#endregion
-#region Save As Mode Handler
 function Invoke-SaveAsKey([ConsoleKeyInfo]$ki) {
+  <#
+  .SYNOPSIS
+      Handles key input while the editor is in save-as mode.
+  #>
   $editorState = Get-EditorState
   switch ($ki.Key) {
     'Escape' { $editorState.EditorMode = 'edit'; $editorState.SaveAsBuffer = ''; return }
@@ -31,10 +44,14 @@ function Invoke-SaveAsKey([ConsoleKeyInfo]$ki) {
   }
 }
 
-
-#endregion
-#region Editing Key Handler
 function Invoke-EditingKey([ConsoleKeyInfo]$ki) {
+  <#
+  .SYNOPSIS
+      Handles key input while the editor is in edit mode.
+  .DESCRIPTION
+      Dispatches Ctrl shortcuts, arrow/page navigation, editing commands,
+      tab completion/indentation, and printable character insertion.
+  #>
   $editorState = Get-EditorState
   $key = $ki.Key
   $ctrl = ($ki.Modifiers -band [ConsoleModifiers]::Control) -ne 0
@@ -187,4 +204,3 @@ function Invoke-EditingKey([ConsoleKeyInfo]$ki) {
     $editorState.AutocompleteMatches = $null
   }
 }
-#endregion

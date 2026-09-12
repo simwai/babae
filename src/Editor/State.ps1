@@ -1,6 +1,14 @@
+<#
+.SYNOPSIS
+    Mutable editor state and buffer operations.
+.DESCRIPTION
+    Defines the central editor state object and provides buffer accessors,
+    offset/row/col conversion, selection helpers, undo/redo, file I/O,
+    scroll position, and search.
+#>
+
 $ErrorActionPreference = 'Stop'
 
-#region Editor State Object
 $script:editorState = [PSCustomObject]@{
   TextBuffer             = [System.Text.StringBuilder]::new()
   CursorOffset           = 0
@@ -25,23 +33,40 @@ $script:editorState = [PSCustomObject]@{
   AutocompleteBaseOffset = 0
 }
 
-#endregion
-#region Buffer Accessors
-function Get-BufferText { $script:editorState.TextBuffer.ToString() }
+function Get-BufferText {
+  <#
+  .SYNOPSIS
+      Returns the current buffer content as a string.
+  #>
+  $script:editorState.TextBuffer.ToString()
+}
 
 function Set-BufferContent([string]$text) {
+  <#
+  .SYNOPSIS
+      Replaces the buffer content and resets the syntax token cache.
+  #>
   $script:editorState.TextBuffer.Clear() | Out-Null
   if ($text) { $script:editorState.TextBuffer.Append($text) | Out-Null }
   $script:editorState.SyntaxTokenCache = @{}
 }
 
 function Set-CursorOffsetBounds {
+  <#
+  .SYNOPSIS
+      Clamps the cursor offset to the current buffer length.
+  #>
   $script:editorState.CursorOffset = [Math]::Max(0, [Math]::Min($script:editorState.CursorOffset, $script:editorState.TextBuffer.Length))
 }
 
-#endregion
-#region Offset RowCol Conversion
 function Convert-OffsetToRowCol([int]$offset) {
+  <#
+  .SYNOPSIS
+      Converts a character offset to (row, column) coordinates.
+  .DESCRIPTION
+      Row and column are zero-based. Column is measured from the start of
+      the line, not from the gutter.
+  #>
   $text = $script:editorState.TextBuffer.ToString()
   $clamped = [Math]::Max(0, [Math]::Min($offset, $text.Length))
   $row = 0; $lineStart = 0
@@ -52,18 +77,30 @@ function Convert-OffsetToRowCol([int]$offset) {
 }
 
 function Get-LineStartOffset([int]$offset) {
+  <#
+  .SYNOPSIS
+      Returns the offset of the first character on the line containing offset.
+  #>
   $text = $script:editorState.TextBuffer.ToString()
   while ($offset -gt 0 -and $text[$offset - 1] -ne "`n") { $offset-- }
   return $offset
 }
 
 function Get-LineEndOffset([int]$offset) {
+  <#
+  .SYNOPSIS
+      Returns the offset just past the last character on the line containing offset.
+  #>
   $text = $script:editorState.TextBuffer.ToString()
   while ($offset -lt $text.Length -and $text[$offset] -ne "`n") { $offset++ }
   return $offset
 }
 
 function Get-LineByNumber([int]$lineNum) {
+  <#
+  .SYNOPSIS
+      Returns the text of a zero-based line number, or $null if out of range.
+  #>
   $text = $script:editorState.TextBuffer.ToString()
   $row = 0; $start = 0
   for ($i = 0; $i -le $text.Length; $i++) {
@@ -76,6 +113,13 @@ function Get-LineByNumber([int]$lineNum) {
 }
 
 function Convert-RowColToOffset([int]$row, [int]$col) {
+  <#
+  .SYNOPSIS
+      Converts (row, column) coordinates to a character offset.
+  .DESCRIPTION
+      Column is clamped to the line length so callers never receive an
+      offset beyond the buffer.
+  #>
   $text = $script:editorState.TextBuffer.ToString()
   $r = 0; $start = 0
   for ($i = 0; $i -le $text.Length; $i++) {
@@ -87,16 +131,20 @@ function Convert-RowColToOffset([int]$row, [int]$col) {
   return $text.Length
 }
 
-#endregion
-#region Selection Helpers
 function Get-SelectionBoundaries {
+  <#
+  .SYNOPSIS
+      Returns the ordered (start, end) offsets of the active selection.
+  #>
   return [Math]::Min($script:editorState.SelectionAnchor, $script:editorState.CursorOffset),
   [Math]::Max($script:editorState.SelectionAnchor, $script:editorState.CursorOffset)
 }
 
-#endregion
-#region Editor State Reset
 function Reset-EditorState {
+  <#
+  .SYNOPSIS
+      Resets all mutable editor state to defaults for a fresh session.
+  #>
   Set-BufferContent ''
   $script:editorState.CursorOffset = 0; $script:editorState.PreferredColumn = 0
   $script:editorState.VerticalScrollRow = 0; $script:editorState.HorizontalScrollOffset = 0
@@ -111,9 +159,14 @@ function Reset-EditorState {
   $script:editorState.AutocompleteBaseOffset = 0
 }
 
-#endregion
-#region File I/O
 function Import-FileIntoEditor([string]$path) {
+  <#
+  .SYNOPSIS
+      Loads a file into the editor buffer and updates file metadata.
+  .DESCRIPTION
+      Reads the file with LF normalization, sets the language from the
+      path, and resets scroll/cursor state.
+  #>
   $script:editorState.FilePath = $path
   $script:editorState.Language = Get-LanguageFromPath $path
   $raw = if (Test-Path $path) {
@@ -125,6 +178,13 @@ function Import-FileIntoEditor([string]$path) {
 }
 
 function Save-EditorFile {
+  <#
+  .SYNOPSIS
+      Writes the buffer to disk using the current editor config.
+  .DESCRIPTION
+      Applies trailing-whitespace trimming, final-newline insertion, line-
+      ending conversion, and charset selection before writing.
+  #>
   if ([string]::IsNullOrWhiteSpace($script:editorState.FilePath)) { $script:editorState.StatusMessage = ' No path '; return }
   $content = Get-BufferText
   if ($script:editorConfigSettings.trim_trailing_whitespace) {
@@ -144,9 +204,14 @@ function Save-EditorFile {
   $script:editorState.IsDirty = $false; $script:editorState.StatusMessage = ' Saved '
 }
 
-#endregion
-#region Undo Redo
 function Push-UndoSnapshot {
+  <#
+  .SYNOPSIS
+      Pushes the current buffer/cursor state onto the undo stack.
+  .DESCRIPTION
+      Caps the undo stack at 200 entries, retaining the most recent 100
+      when the cap is exceeded. Clears the redo stack on new changes.
+  #>
   if ($script:editorState.UndoStack.Count -ge 200) {
     $arr = $script:editorState.UndoStack.ToArray()
     $script:editorState.UndoStack.Clear()
@@ -162,6 +227,10 @@ function Push-UndoSnapshot {
 }
 
 function Restore-Snapshot($snap, $targetStack) {
+  <#
+  .SYNOPSIS
+      Restores a snapshot onto the target stack and swaps buffer state.
+  #>
   $targetStack.Push([PSCustomObject]@{
       Buffer = Get-BufferText; Cursor = $script:editorState.CursorOffset; Preferred = $script:editorState.PreferredColumn
     })
@@ -175,24 +244,38 @@ function Restore-Snapshot($snap, $targetStack) {
 }
 
 function Undo-LastChange {
+  <#
+  .SYNOPSIS
+      Pops the last undo snapshot and restores the previous buffer state.
+  #>
   if ($script:editorState.UndoStack.Count -eq 0) { $script:editorState.StatusMessage = ' Nothing to undo '; return }
   Restore-Snapshot $script:editorState.UndoStack.Pop() $script:editorState.RedoStack
 }
 
 function Redo-LastChange {
+  <#
+  .SYNOPSIS
+      Pops the last redo snapshot and restores the forward buffer state.
+  #>
   if ($script:editorState.RedoStack.Count -eq 0) { $script:editorState.StatusMessage = ' Nothing to redo '; return }
   Restore-Snapshot $script:editorState.RedoStack.Pop() $script:editorState.UndoStack
 }
 
-#endregion
-#region Selection Operations
 function Get-SelectedText {
+  <#
+  .SYNOPSIS
+      Returns the currently selected text, or an empty string if none.
+  #>
   if (-not $script:editorState.IsSelectionActive) { return [string]::Empty }
   $s, $e = Get-SelectionBoundaries
   (Get-BufferText).Substring($s, $e - $s)
 }
 
 function Remove-SelectedText {
+  <#
+  .SYNOPSIS
+      Deletes the selected range and collapses the cursor to its start.
+  #>
   if (-not $script:editorState.IsSelectionActive) { return }
   $s, $e = Get-SelectionBoundaries
   $t = Get-BufferText
@@ -203,15 +286,24 @@ function Remove-SelectedText {
 }
 
 function Start-Selection {
+  <#
+  .SYNOPSIS
+      Activates selection anchored at the current cursor position.
+  #>
   if (-not $script:editorState.IsSelectionActive) {
     $script:editorState.IsSelectionActive = $true
     $script:editorState.SelectionAnchor = $script:editorState.CursorOffset
   }
 }
 
-#endregion
-#region Paste Text
 function Insert-TextFromClipboard([string]$text) {
+  <#
+  .SYNOPSIS
+      Inserts clipboard text at the cursor, replacing any active selection.
+  .DESCRIPTION
+      Normalizes line endings to LF, strips paste bracketing sequences,
+      and updates cursor, dirty state, and render cache.
+  #>
   if ([string]::IsNullOrEmpty($text)) { $script:editorState.StatusMessage = ' Clipboard empty '; return }
   Push-UndoSnapshot
   if ($script:editorState.IsSelectionActive) { Remove-SelectedText }
@@ -225,9 +317,11 @@ function Insert-TextFromClipboard([string]$text) {
   Clear-RenderCache
 }
 
-#endregion
-#region Scroll Position
 function Set-ScrollPosition {
+  <#
+  .SYNOPSIS
+      Adjusts vertical and horizontal scroll offsets to keep the cursor visible.
+  #>
   try { $height = [Console]::WindowHeight - 2 } catch { $height = 22 }
   if ($height -lt 1) { $height = 1 }
   $cursorRow = (Convert-OffsetToRowCol $script:editorState.CursorOffset)[0]
@@ -242,21 +336,25 @@ function Set-ScrollPosition {
   $script:editorState.HorizontalScrollOffset = [Math]::Max(0, $script:editorState.HorizontalScrollOffset)
 }
 
-#endregion
-#region Render Cache
 $script:cachedRenderRows = [System.Collections.Generic.List[string]]::new()
 $script:cachedCursorRow = -1
 $script:cachedCursorColumn = -1
 
 function Clear-RenderCache {
+  <#
+  .SYNOPSIS
+      Invalidates cached rendered rows and cursor screen coordinates.
+  #>
   $script:cachedRenderRows.Clear()
   $script:cachedCursorRow = -1
   $script:cachedCursorColumn = -1
 }
 
-#endregion
-#region Cursor Movement
 function Move-CursorLeft {
+  <#
+  .SYNOPSIS
+      Moves the cursor left, collapsing selection if active.
+  #>
   if ($script:editorState.IsSelectionActive) { $script:editorState.CursorOffset = (Get-SelectionBoundaries)[0] }
   elseif ($script:editorState.CursorOffset -gt 0) { $script:editorState.CursorOffset-- }
   $script:editorState.IsSelectionActive = $false
@@ -265,6 +363,10 @@ function Move-CursorLeft {
 }
 
 function Move-CursorRight {
+  <#
+  .SYNOPSIS
+      Moves the cursor right, collapsing selection if active.
+  #>
   if ($script:editorState.IsSelectionActive) { $script:editorState.CursorOffset = (Get-SelectionBoundaries)[1] }
   elseif ($script:editorState.CursorOffset -lt $script:editorState.TextBuffer.Length) { $script:editorState.CursorOffset++ }
   $script:editorState.IsSelectionActive = $false
@@ -273,6 +375,10 @@ function Move-CursorRight {
 }
 
 function Move-CursorUp([bool]$extendSelection = $false) {
+  <#
+  .SYNOPSIS
+      Moves the cursor up, optionally extending the selection.
+  #>
   if ($extendSelection -and -not $script:editorState.IsSelectionActive) { $script:editorState.SelectionAnchor = $script:editorState.CursorOffset; $script:editorState.IsSelectionActive = $true }
   if (-not $extendSelection) { $script:editorState.IsSelectionActive = $false }
   $row = (Convert-OffsetToRowCol $script:editorState.CursorOffset)[0]
@@ -281,6 +387,10 @@ function Move-CursorUp([bool]$extendSelection = $false) {
 }
 
 function Move-CursorDown([bool]$extendSelection = $false) {
+  <#
+  .SYNOPSIS
+      Moves the cursor down, optionally extending the selection.
+  #>
   if ($extendSelection -and -not $script:editorState.IsSelectionActive) { $script:editorState.SelectionAnchor = $script:editorState.CursorOffset; $script:editorState.IsSelectionActive = $true }
   if (-not $extendSelection) { $script:editorState.IsSelectionActive = $false }
   $row = (Convert-OffsetToRowCol $script:editorState.CursorOffset)[0]
@@ -289,6 +399,10 @@ function Move-CursorDown([bool]$extendSelection = $false) {
 }
 
 function Move-CursorHome([bool]$extendSelection = $false) {
+  <#
+  .SYNOPSIS
+      Moves the cursor to the start of the line, optionally extending selection.
+  #>
   if ($extendSelection -and -not $script:editorState.IsSelectionActive) { $script:editorState.SelectionAnchor = $script:editorState.CursorOffset; $script:editorState.IsSelectionActive = $true }
   if (-not $extendSelection) { $script:editorState.IsSelectionActive = $false }
   $script:editorState.CursorOffset = Get-LineStartOffset $script:editorState.CursorOffset
@@ -296,6 +410,10 @@ function Move-CursorHome([bool]$extendSelection = $false) {
 }
 
 function Move-CursorEnd([bool]$extendSelection = $false) {
+  <#
+  .SYNOPSIS
+      Moves the cursor to the end of the line, optionally extending selection.
+  #>
   if ($extendSelection -and -not $script:editorState.IsSelectionActive) { $script:editorState.SelectionAnchor = $script:editorState.CursorOffset; $script:editorState.IsSelectionActive = $true }
   if (-not $extendSelection) { $script:editorState.IsSelectionActive = $false }
   $script:editorState.CursorOffset = Get-LineEndOffset $script:editorState.CursorOffset
@@ -303,6 +421,10 @@ function Move-CursorEnd([bool]$extendSelection = $false) {
 }
 
 function Move-CursorPageUp {
+  <#
+  .SYNOPSIS
+      Moves the cursor up by one screenful, collapsing selection.
+  #>
   $script:editorState.IsSelectionActive = $false; $script:editorState.AutocompleteMatches = $null
   try { $page = [Console]::WindowHeight - 2 } catch { $page = 22 }
   $row = (Convert-OffsetToRowCol $script:editorState.CursorOffset)[0]
@@ -310,6 +432,10 @@ function Move-CursorPageUp {
 }
 
 function Move-CursorPageDown {
+  <#
+  .SYNOPSIS
+      Moves the cursor down by one screenful, collapsing selection.
+  #>
   $script:editorState.IsSelectionActive = $false; $script:editorState.AutocompleteMatches = $null
   try { $page = [Console]::WindowHeight - 2 } catch { $page = 22 }
   $row = (Convert-OffsetToRowCol $script:editorState.CursorOffset)[0]
@@ -319,6 +445,10 @@ function Move-CursorPageDown {
 #endregion
 #region Editing Operations
 function Insert-Newline {
+  <#
+  .SYNOPSIS
+      Splits the current line at the cursor and records an undo snapshot.
+  #>
   Push-UndoSnapshot
   if ($script:editorState.IsSelectionActive) { Remove-SelectedText }
   $t = Get-BufferText
@@ -328,6 +458,10 @@ function Insert-Newline {
 }
 
 function Remove-Backward {
+  <#
+  .SYNOPSIS
+      Deletes the character before the cursor, or the selection if active.
+  #>
   if ($script:editorState.IsSelectionActive) { Push-UndoSnapshot; Remove-SelectedText; $script:editorState.AutocompleteMatches = $null; return }
   if ($script:editorState.CursorOffset -gt 0) {
     Push-UndoSnapshot
@@ -340,6 +474,10 @@ function Remove-Backward {
 }
 
 function Remove-Forward {
+  <#
+  .SYNOPSIS
+      Deletes the character after the cursor, or the selection if active.
+  #>
   if ($script:editorState.IsSelectionActive) { Push-UndoSnapshot; Remove-SelectedText; $script:editorState.AutocompleteMatches = $null; return }
   if ($script:editorState.CursorOffset -lt $script:editorState.TextBuffer.Length) {
     Push-UndoSnapshot
@@ -351,6 +489,10 @@ function Remove-Forward {
 }
 
 function Insert-Char([char]$ch) {
+  <#
+  .SYNOPSIS
+      Inserts a single character at the cursor, replacing any selection.
+  #>
   Push-UndoSnapshot
   if ($script:editorState.IsSelectionActive) { Remove-SelectedText }
   $t = Get-BufferText
@@ -362,6 +504,10 @@ function Insert-Char([char]$ch) {
 }
 
 function Insert-Indentation {
+  <#
+  .SYNOPSIS
+      Inserts the configured indentation string at the cursor.
+  #>
   Push-UndoSnapshot
   Insert-TextAtCursor (Get-IndentationString)
 }
@@ -369,6 +515,10 @@ function Insert-Indentation {
 #endregion
 #region Autocomplete Helpers
 function Get-WordPrefixAtCursor {
+  <#
+  .SYNOPSIS
+      Returns the word fragment immediately before the cursor.
+  #>
   $t = Get-BufferText
   $end = $script:editorState.CursorOffset
   $start = $end
@@ -377,11 +527,19 @@ function Get-WordPrefixAtCursor {
 }
 
 function Get-AllWordsInBuffer {
+  <#
+  .SYNOPSIS
+      Returns unique words longer than one character from the buffer.
+  #>
   $t = Get-BufferText
   return $t -split '\W+' | Where-Object { $_.Length -gt 1 } | Sort-Object -Unique
 }
 
 function Insert-TextAtCursor([string]$s) {
+  <#
+  .SYNOPSIS
+      Inserts text at the cursor position and invalidates the render cache.
+  #>
   $t = Get-BufferText
   Set-BufferContent ($t.Substring(0, $script:editorState.CursorOffset) + $s + $t.Substring($script:editorState.CursorOffset))
   $script:editorState.CursorOffset += $s.Length
@@ -391,6 +549,10 @@ function Insert-TextAtCursor([string]$s) {
 }
 
 function Set-CurrentWord([string]$newWord) {
+  <#
+  .SYNOPSIS
+      Replaces the word under the cursor with newWord.
+  #>
   $t = Get-BufferText
   $prefix = Get-WordPrefixAtCursor
   $start = $script:editorState.CursorOffset - $prefix.Length
@@ -403,9 +565,14 @@ function Set-CurrentWord([string]$newWord) {
   Clear-RenderCache
 }
 
-#endregion
-#region Search
 function Search-ForTerm([string]$term) {
+  <#
+  .SYNOPSIS
+      Searches forward from the cursor for a case-insensitive match.
+  .DESCRIPTION
+      Wraps to the top of the buffer when no match is found ahead. Sets
+      the active selection on success.
+  #>
   if ([string]::IsNullOrWhiteSpace($term)) { return }
   $script:editorState.LastSearchTerm = $term
   $script:editorState.IsSelectionActive = $false
@@ -420,13 +587,18 @@ function Search-ForTerm([string]$term) {
   $script:editorState.StatusMessage = ' Found '
 }
 
-#endregion
-#region Editor State Accessors
 function Get-EditorState {
+  <#
+  .SYNOPSIS
+      Returns the current editor state object.
+  #>
   return $script:editorState
 }
 
 function Set-EditorState([PSCustomObject]$state) {
+  <#
+  .SYNOPSIS
+      Replaces the current editor state object.
+  #>
   $script:editorState = $state
 }
-#endregion

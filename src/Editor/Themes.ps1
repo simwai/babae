@@ -1,6 +1,13 @@
+<#
+.SYNOPSIS
+    Theme definitions and color lookup for the babae editor.
+.DESCRIPTION
+    Provides the base theme table, per-theme overrides, current theme index,
+    and accessors used by the renderer.
+#>
+
 $ErrorActionPreference = 'Stop'
 
-#region Base Theme
 $script:baseTheme = @{
   background                  = "48;2;17;15;26"
   backgroundLine              = "48;2;24;21;36"
@@ -33,8 +40,14 @@ $script:baseTheme = @{
   displayName                 = ""
 }
 
-#endregion
 function New-ThemeFromOverride([hashtable]$overrides, [string]$displayName) {
+  <#
+  .SYNOPSIS
+      Creates a theme hashtable by applying overrides to the base theme.
+  .DESCRIPTION
+      Clones the base theme, replaces keys with overrides, and stamps the
+      display name. Used to build the named theme palette.
+  #>
   $theme = $script:baseTheme.Clone()
   foreach ($key in $overrides.Keys) { $theme[$key] = $overrides[$key] }
   $theme.displayName = $displayName
@@ -140,27 +153,51 @@ $script:currentThemeIndex = 0
 $script:RESET_SEQUENCE = "`e[0m"
 
 function Get-ThemeColor([string]$key) {
+  <#
+  .SYNOPSIS
+      Returns the ANSI escape sequence for a theme color key.
+  #>
   $currentTheme = $script:themeDefinitions[$script:availableThemeNames[$script:currentThemeIndex]]
   return "`e[$($currentTheme[$key])m"
 }
 
 function Set-CurrentThemeIndex([int]$index) {
+  <#
+  .SYNOPSIS
+      Sets the active theme by palette index, clamped to valid range.
+  #>
   $script:currentThemeIndex = [Math]::Max(0, [Math]::Min($index, $script:availableThemeNames.Count - 1))
 }
 
 function Get-CurrentThemeIndex {
+  <#
+  .SYNOPSIS
+      Returns the current theme palette index.
+  #>
   return $script:currentThemeIndex
 }
 
 function Get-AvailableThemeNames {
+  <#
+  .SYNOPSIS
+      Returns the list of available theme names.
+  #>
   return $script:availableThemeNames
 }
 
 function Get-ThemeDefinitions {
+  <#
+  .SYNOPSIS
+      Returns the full theme definitions hashtable.
+  #>
   return $script:themeDefinitions
 }
 
 function Get-CurrentThemeDisplayName {
+  <#
+  .SYNOPSIS
+      Returns the display name of the currently active theme.
+  #>
   $currentTheme = $script:themeDefinitions[$script:availableThemeNames[$script:currentThemeIndex]]
   return $currentTheme.displayName
 }

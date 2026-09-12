@@ -1,7 +1,21 @@
+<#
+.SYNOPSIS
+    Frame rendering and ANSI sequence emission for the editor UI.
+.DESCRIPTION
+    Builds per-row styled content, renders the full editor frame, and moves
+    the cursor to screen coordinates using CSI sequences.
+#>
+
 $ErrorActionPreference = 'Stop'
 
-#region Build Editor Row Content
 function Build-EditorRowContent([int]$rowIndex, [int]$screenWidth, [int]$textWidth) {
+  <#
+  .SYNOPSIS
+      Builds the styled string for a single editor row.
+  .DESCRIPTION
+      Handles header, status bar, empty rows with tildes, and text rows
+      with gutter, syntax highlighting, selection, and ruler columns.
+  #>
   $editorState = Get-EditorState
   $cursorRow, $cursorCol = Convert-OffsetToRowCol $editorState.CursorOffset
   $selStart = 0; $selEnd = 0
@@ -40,9 +54,9 @@ function Build-EditorRowContent([int]$rowIndex, [int]$screenWidth, [int]$textWid
     if ($editorState.IsSelectionActive) { $rightPlain = " SEL |" + $rightPlain }
     $pad = [Math]::Max(0, $screenWidth - $leftPlain.Length - $rightPlain.Length)
     $right = ''
-    if ($msg) { $right += "$(Get-ThemeColor 'foregroundSaved') $msg $script:RESET_SEQUENCE$(Get-ThemeColor 'backgroundStatusBar')$(Get-ThemeColor 'foregroundMuted')│" }
-    if ($editorState.IsSelectionActive) { $right += "$(Get-ThemeColor 'foregroundAccent') SEL $script:RESET_SEQUENCE$(Get-ThemeColor 'backgroundStatusBar')$(Get-ThemeColor 'foregroundMuted')│" }
-    $right += "$(Get-ThemeColor 'foregroundMuted') $eol $(Get-ThemeColor 'foregroundMuted')│ $(Get-ThemeColor 'foregroundMuted')$ecHint $(Get-ThemeColor 'foregroundMuted')│$(Get-ThemeColor 'foregroundAccent')$pos$script:RESET_SEQUENCE"
+    if ($msg) { $right += "$(Get-ThemeColor 'foregroundSaved') $msg $script:RESET_SEQUENCE$(Get-ThemeColor 'backgroundStatusBar')$(Get-ThemeColor 'foregroundMuted')" }
+    if ($editorState.IsSelectionActive) { $right += "$(Get-ThemeColor 'foregroundAccent') SEL $script:RESET_SEQUENCE$(Get-ThemeColor 'backgroundStatusBar')$(Get-ThemeColor 'foregroundMuted')" }
+    $right += "$(Get-ThemeColor 'foregroundMuted') $eol $(Get-ThemeColor 'foregroundMuted') $(Get-ThemeColor 'foregroundMuted')$ecHint $(Get-ThemeColor 'foregroundMuted')$(Get-ThemeColor 'foregroundAccent')$pos$script:RESET_SEQUENCE"
     $barLeft = "$(Get-ThemeColor 'backgroundStatusBar')"
     foreach ($cmd in $barCmds) {
       $barLeft += "$(Get-ThemeColor 'foregroundAccent')${BOLD_SEQUENCE}$($cmd.Key)$script:RESET_SEQUENCE$(Get-ThemeColor 'backgroundStatusBar')$(Get-ThemeColor 'foregroundMuted') $($cmd.Label) "
@@ -108,7 +122,7 @@ function Build-EditorRowContent([int]$rowIndex, [int]$screenWidth, [int]$textWid
     if ($inSel) {
       [void]$sb.Append("$(Get-ThemeColor 'backgroundSelection')$(Get-ThemeColor $fgKey)$ch$bg")
     } elseif ($rulerHere) {
-      [void]$sb.Append("$(Get-ThemeColor 'foregroundRuler')│$(Get-ThemeColor $fgKey)$ch")
+      [void]$sb.Append("$(Get-ThemeColor 'foregroundRuler')$(Get-ThemeColor $fgKey)$ch")
     } else {
       [void]$sb.Append("$(Get-ThemeColor $fgKey)$ch")
     }
@@ -117,9 +131,11 @@ function Build-EditorRowContent([int]$rowIndex, [int]$screenWidth, [int]$textWid
   return $sb.ToString()
 }
 
-#endregion
-#region Render Editor Frame
 function Write-EditorFrame {
+  <#
+  .SYNOPSIS
+      Renders the full editor frame for the current terminal size.
+  #>
   $editorState = Get-EditorState
   try { $width = [Console]::WindowWidth } catch { $width = 80 }
   try { $height = [Console]::WindowHeight } catch { $height = 24 }
@@ -161,7 +177,4 @@ function Write-EditorFrame {
   $editorState.StatusMessage = ''
 }
 
-#endregion
-#region Move Cursor To Screen Coordinate
 function Move-CursorToScreenCoordinate([int]$r, [int]$c) { "`e[$r;${c}H" }
-#endregion

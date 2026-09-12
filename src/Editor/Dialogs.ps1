@@ -1,7 +1,18 @@
+<#
+.SYNOPSIS
+    Modal dialogs for the babae editor.
+.DESCRIPTION
+    Renders the help keybindings overlay and the unsaved-changes confirm-quit
+    dialog using terminal escape sequences.
+#>
+
 $ErrorActionPreference = 'Stop'
 
-#region Help Dialog
 function Show-HelpDialog {
+  <#
+  .SYNOPSIS
+      Renders the centered help overlay and waits for any key press.
+  #>
   try { $width = [Console]::WindowWidth } catch { $width = 80 }
   try { $height = [Console]::WindowHeight } catch { $height = 24 }
   $themeName = Get-CurrentThemeDisplayName
@@ -10,7 +21,7 @@ function Show-HelpDialog {
     "  $($_.Key)$pad$($_.Label)"
   }
   $lines = @(
-    '', '  babae  —  keybindings', '  ────────────────────────────────────',
+    '', '  babae  -  keybindings', '  --------------------------------',
     "  Theme now: $themeName", ''
   ) + $cmdLines + @(
     '', '  Shift+Arrows  Extend selection',
@@ -44,12 +55,14 @@ function Show-HelpDialog {
   Clear-RenderCache
 }
 
-#endregion
-#region Confirm Quit Dialog
 function Show-ConfirmQuitDialog {
+  <#
+  .SYNOPSIS
+      Renders the unsaved-changes confirmation dialog.
+  #>
   try { $width = [Console]::WindowWidth } catch { $width = 80 }
   try { $height = [Console]::WindowHeight } catch { $height = 24 }
-  $msg = '  Unsaved changes — quit anyway?  [y / N]  '
+  $msg = '  Unsaved changes - quit anyway?  [y / N]  '
   $boxW = $msg.Length + 2
   $top = [int](($height - 3) / 2)
   $left = [int](($width - $boxW) / 2)
@@ -72,4 +85,3 @@ function Show-ConfirmQuitDialog {
     if ($key -in 'N', 'Escape', 'Enter' -or $ch -eq 'N' -or $ch -eq 'n') { $editorState.EditorMode = 'edit'; $editorState.StatusMessage = ' Quit cancelled '; Clear-RenderCache; return }
   }
 }
-#endregion

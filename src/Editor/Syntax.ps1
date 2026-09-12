@@ -1,7 +1,21 @@
+<#
+.SYNOPSIS
+    Language detection and syntax tokenization rules for the editor.
+.DESCRIPTION
+    Maps file extensions to language names and provides compiled regex-based
+    tokenizers used by the syntax highlighter.
+#>
+
 $ErrorActionPreference = 'Stop'
 
-#region Language Detection
 function Get-LanguageFromPath([string]$path) {
+  <#
+  .SYNOPSIS
+      Infers the language name from a file path.
+  .DESCRIPTION
+      Uses the file extension, with fallback heuristics for .env and
+      Dockerfile. Returns 'Plain Text' when no rule matches.
+  #>
   if ([string]::IsNullOrEmpty($path)) { return 'Plain Text' }
   switch ([IO.Path]::GetExtension($path).ToLowerInvariant()) {
     '.ps1' { 'PowerShell' } '.psm1' { 'PowerShell' } '.psd1' { 'PowerShell' }
@@ -25,7 +39,7 @@ function Get-LanguageFromPath([string]$path) {
     }
   }
 }
-#endregion
+
 #region Syntax Rules
 $script:languageSyntaxRules = @{
   "JavaScript" = @(
@@ -62,7 +76,7 @@ $script:languageSyntaxRules = @{
     @{ CompiledRegex = [regex]::new('"(?:[^"\\]|\\.)*"', 'Compiled'); TokenType = 'string' }
     @{ CompiledRegex = [regex]::new("'(?:[^'\\]|\\.)*'", 'Compiled'); TokenType = 'string' }
     @{ CompiledRegex = [regex]::new('\b(if|elif|else|for|while|def|class|import|from|as|return|yield|with|try|except|finally|raise|break|continue|pass|and|or|not|in|is|None|True|False)\b', 'Compiled'); TokenType = 'keyword' }
-    @{ CompiledRegex = [regex]::new('\b\d+(\.\d+)?([eE][+-]?\d+)?\b', 'Compiled'); TokenType = 'number' }
+    @{ CompiledRegex = [regex]::new('\b\d+(\.\d+)?\b', 'Compiled'); TokenType = 'number' }
     @{ CompiledRegex = [regex]::new('\b[A-Z][a-zA-Z0-9_]*\b', 'Compiled'); TokenType = 'type' }
     @{ CompiledRegex = [regex]::new('\b[a-zA-Z_]\w*(?=\s*[\(])', 'Compiled'); TokenType = 'function' }
     @{ CompiledRegex = [regex]::new('[\+\-\*\/%<>=!&|^~]+', 'Compiled'); TokenType = 'operator' }
@@ -127,15 +141,15 @@ $script:languageSyntaxRules = @{
   )
   "YAML"       = @(
     @{ CompiledRegex = [regex]::new('#.*$', 'Compiled'); TokenType = 'comment' }
-    @{ CompiledRegex = [regex]::new('"(?:[^"\\]|\\.)*"', 'Compiled'); TokenType = 'string' }
-    @{ CompiledRegex = [regex]::new("'(?:[^']|'')*'", 'Compiled'); TokenType = 'string' }
+    @{ CompiledRegex = [regex]::new('"[^"]*"', 'Compiled'); TokenType = 'string' }
+    @{ CompiledRegex = [regex]::new("'[^']*'", 'Compiled'); TokenType = 'string' }
     @{ CompiledRegex = [regex]::new('\b(true|false|null)\b', 'Compiled'); TokenType = 'constant' }
     @{ CompiledRegex = [regex]::new('-?\b\d+(\.\d+)?\b', 'Compiled'); TokenType = 'number' }
     @{ CompiledRegex = [regex]::new('[\[\]{}:>|]', 'Compiled'); TokenType = 'punctuation' }
   )
   "TOML"       = @(
     @{ CompiledRegex = [regex]::new('#.*$', 'Compiled'); TokenType = 'comment' }
-    @{ CompiledRegex = [regex]::new('"(?:[^"\\]|\\.)*"', 'Compiled'); TokenType = 'string' }
+    @{ CompiledRegex = [regex]::new('"[^"]*"', 'Compiled'); TokenType = 'string' }
     @{ CompiledRegex = [regex]::new("'(?:[^'\\]|'')*'", 'Compiled'); TokenType = 'string' }
     @{ CompiledRegex = [regex]::new('\b(true|false)\b', 'Compiled'); TokenType = 'constant' }
     @{ CompiledRegex = [regex]::new('-?\b\d+(\.\d+)?\b', 'Compiled'); TokenType = 'number' }
@@ -154,7 +168,7 @@ $script:languageSyntaxRules = @{
     @{ CompiledRegex = [regex]::new('"(?:[^"\\]|\\.)*"', 'Compiled'); TokenType = 'string' }
     @{ CompiledRegex = [regex]::new('\b(if|else|for|while|do|switch|case|break|continue|return|class|interface|extends|implements|new|this|super|import|package|try|catch|finally|throw|throws|public|private|protected|static|final|void|int|long|double|boolean|char|byte|short|float|String)\b', 'Compiled'); TokenType = 'keyword' }
     @{ CompiledRegex = [regex]::new('\b(true|false|null)\b', 'Compiled'); TokenType = 'constant' }
-    @{ CompiledRegex = [regex]::new('\b\d+(\.\d+)?([eE][+-]?\d+)?\b', 'Compiled'); TokenType = 'number' }
+    @{ CompiledRegex = [regex]::new('\b\d+(\.\d+)?\b', 'Compiled'); TokenType = 'number' }
     @{ CompiledRegex = [regex]::new('\b[A-Z][a-zA-Z0-9_]*\b', 'Compiled'); TokenType = 'type' }
     @{ CompiledRegex = [regex]::new('\b[a-zA-Z_]\w*(?=\s*[\(])', 'Compiled'); TokenType = 'function' }
     @{ CompiledRegex = [regex]::new('[+\-*/%<>=!&|^~?:]+', 'Compiled'); TokenType = 'operator' }
@@ -166,7 +180,7 @@ $script:languageSyntaxRules = @{
     @{ CompiledRegex = [regex]::new('"(?:[^"\\]|\\.)*"', 'Compiled'); TokenType = 'string' }
     @{ CompiledRegex = [regex]::new('\b(if|else|for|foreach|while|do|switch|case|break|continue|return|class|struct|interface|enum|namespace|using|new|this|base|public|private|protected|internal|static|readonly|virtual|override|abstract|sealed|async|await|try|catch|finally|throw|int|long|float|double|decimal|bool|char|string|var|void|object|dynamic)\b', 'Compiled'); TokenType = 'keyword' }
     @{ CompiledRegex = [regex]::new('\b(true|false|null)\b', 'Compiled'); TokenType = 'constant' }
-    @{ CompiledRegex = [regex]::new('\b\d+(\.\d+)?([eE][+-]?\d+)?\b', 'Compiled'); TokenType = 'number' }
+    @{ CompiledRegex = [regex]::new('\b\d+(\.\d+)?\b', 'Compiled'); TokenType = 'number' }
     @{ CompiledRegex = [regex]::new('\b[A-Z][a-zA-Z0-9_]*\b', 'Compiled'); TokenType = 'type' }
     @{ CompiledRegex = [regex]::new('\b[a-zA-Z_]\w*(?=\s*[\(])', 'Compiled'); TokenType = 'function' }
     @{ CompiledRegex = [regex]::new('[+\-*/%<>=!&|^~?:]+', 'Compiled'); TokenType = 'operator' }
@@ -188,9 +202,14 @@ $script:languageSyntaxRules = @{
   )
 }
 
-#endregion
-#region Tokenizer
 function Get-TokensForLine([string]$line, [string]$language) {
+  <#
+  .SYNOPSIS
+      Tokenizes a single line for syntax highlighting.
+  .DESCRIPTION
+      Greedily matches the longest token at the current position using the
+      language's compiled regex rules. Returns an empty list for unknown languages.
+  #>
   if (-not $script:languageSyntaxRules.ContainsKey($language)) { return @() }
   $rules = $script:languageSyntaxRules[$language]
   $tokenList = [System.Collections.Generic.List[object]]::new()
@@ -209,9 +228,10 @@ function Get-TokensForLine([string]$line, [string]$language) {
   return $tokenList
 }
 
-#endregion
-#region Accessors
 function Get-LanguageSyntaxRules {
+  <#
+  .SYNOPSIS
+      Returns the language syntax rules table.
+  #>
   return $script:languageSyntaxRules
 }
-#endregion

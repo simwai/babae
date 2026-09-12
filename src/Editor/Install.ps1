@@ -1,7 +1,22 @@
+<#
+.SYNOPSIS
+    Installation check and global profile setup for babae.
+.DESCRIPTION
+    Detects whether babae is installed globally, prompts for install or
+    update, and adds a profile function when needed.
+#>
+
 $ErrorActionPreference = 'Stop'
 
-#region Install Check
 function Invoke-InstallCheck {
+  <#
+  .SYNOPSIS
+      Ensures the running babae script matches the globally installed copy.
+  .DESCRIPTION
+      Skips entirely in redirected or test environments. When running from
+      a non-installed copy, prompts the user to copy the script into
+      ~/.babae and add a profile function.
+  #>
   if ([Console]::IsInputRedirected -or $Env:BABAE_SKIP_INSTALL) { return }
 
   $installDirectory = Join-Path $HOME ".babae"
@@ -56,9 +71,9 @@ function Invoke-InstallCheck {
           Write-Host " Global 'babae' command updated." -ForegroundColor Green
         }
         Write-Host " babae installed/updated successfully at $installedScriptPath" -ForegroundColor Green
-Start-Sleep -Seconds 1
+        Start-Sleep -Seconds 1
       }
     }
-   }
+  }
 }
-#endregion
+

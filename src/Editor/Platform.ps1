@@ -1,3 +1,11 @@
+<#
+.SYNOPSIS
+    Platform-specific console raw mode handling.
+.DESCRIPTION
+    Enters and exits raw terminal mode on Windows (Win32 Console API) and
+    Unix (stty), preserving the original settings for later restoration.
+#>
+
 $ErrorActionPreference = 'Stop'
 
 $script:isWindowsPlatform = $IsWindows -or $env:OS -eq 'Windows_NT'
@@ -6,6 +14,13 @@ $script:originalSttySettings = $null
 $script:originalConsoleMode = $null
 
 function Enter-RawInputMode {
+  <#
+  .SYNOPSIS
+      Puts the console into raw mode for direct key reading.
+  .DESCRIPTION
+      Uses stty on Unix and Win32 Console API on Windows. Original settings
+      are cached so Exit-RawInputMode can restore them deterministically.
+  #>
   if ($script:isUnixPlatform -and -not [Console]::IsInputRedirected) {
     try { $script:originalSttySettings = stty -g 2>/dev/null } catch {}
     try { stty raw -echo 2>/dev/null } catch {}
@@ -29,12 +44,13 @@ function Enter-RawInputMode {
         public const uint ENABLE_QUICK_EDIT_MODE = 0x0040;
         public const uint ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200;
     }
-'@ -ErrorAction SilentlyContinue
+    '@ -ErrorAction SilentlyContinue
 
     $handle = [ConsoleRaw]::GetStdHandle([ConsoleRaw]::STD_INPUT_HANDLE)
     [uint]$mode = 0
     [void][ConsoleRaw]::GetConsoleMode($handle, [ref]$mode)
     $script:originalConsoleMode = $mode
+    # Disable echo, line input, processed input, and quick edit; enable VT input.
     $newMode = ($mode -band (-bnot ([ConsoleRaw]::ENABLE_ECHO_INPUT -bor [ConsoleRaw]::ENABLE_LINE_INPUT -bor [ConsoleRaw]::ENABLE_PROCESSED_INPUT -bor [ConsoleRaw]::ENABLE_QUICK_EDIT_MODE))) `
       -bor [ConsoleRaw]::ENABLE_EXTENDED_FLAGS -bor [ConsoleRaw]::ENABLE_VIRTUAL_TERMINAL_INPUT
     [void][ConsoleRaw]::SetConsoleMode($handle, $newMode)
@@ -42,6 +58,13 @@ function Enter-RawInputMode {
 }
 
 function Exit-RawInputMode {
+  <#
+  .SYNOPSIS
+      Restores the console to its original mode.
+  .DESCRIPTION
+      Reverses Enter-RawInputMode using the cached original settings for
+      both Windows Console API and Unix stty paths.
+  #>
   if ($null -ne $script:originalConsoleMode) {
     try {
       $handle = [ConsoleRaw]::GetStdHandle([ConsoleRaw]::STD_INPUT_HANDLE)

@@ -1,6 +1,13 @@
+<#
+.SYNOPSIS
+    Input/output infrastructure, escape sequence parsing, and event construction.
+.DESCRIPTION
+    Manages the console output stream, async input reads, escape-sequence
+    decoding, and translation of raw bytes into typed input events.
+#>
+
 $ErrorActionPreference = 'Stop'
 
-#region Input Output Infrastructure
 $script:outputWriter = $null
 $script:inputStream = $null
 $script:inputReadBuffer = [byte[]]::new(4096)
@@ -9,6 +16,13 @@ $script:isInteractiveConsole = $true
 $script:currentReadTask = $null
 
 function Initialize-InputStreams {
+  <#
+  .SYNOPSIS
+      Lazily initializes the console output writer and input stream.
+  .DESCRIPTION
+      Falls back to null streams when the console cannot be opened, which
+      keeps the editor usable in redirected or test environments.
+  #>
   if ($null -eq $script:outputWriter) {
     try {
       $script:outputWriter = [System.IO.StreamWriter]::new([Console]::OpenStandardOutput())
@@ -25,12 +39,20 @@ function Initialize-InputStreams {
 }
 
 function Write-OutputBuffer([string]$text) {
+  <#
+  .SYNOPSIS
+      Writes text to the console output buffer and flushes.
+  #>
   Initialize-InputStreams
   $script:outputWriter.Write($text)
   $script:outputWriter.Flush()
 }
 
 function Start-AsyncInputRead {
+  <#
+  .SYNOPSIS
+      Starts an async read on the input stream if none is in flight.
+  #>
   Initialize-InputStreams
   if ($null -eq $script:currentReadTask) {
     $script:currentReadTask = $script:inputStream.ReadAsync($script:inputReadBuffer, 0, $script:inputReadBuffer.Length)
@@ -38,6 +60,10 @@ function Start-AsyncInputRead {
 }
 
 function Complete-AsyncInputRead {
+  <#
+  .SYNOPSIS
+      Completes the in-flight async read and enqueues bytes.
+  #>
   $bytesRead = $script:currentReadTask.GetAwaiter().GetResult()
   $script:currentReadTask = $null
   for ($i = 0; $i -lt $bytesRead; $i++) {
@@ -47,6 +73,10 @@ function Complete-AsyncInputRead {
 }
 
 function Test-InputQueueDrained {
+  <#
+  .SYNOPSIS
+      Returns true when no input bytes are pending.
+  #>
   if ($script:pendingByteQueue.Count -gt 0) { return $true }
   if ($script:isInteractiveConsole) {
     try { return [Console]::KeyAvailable } catch { $script:isInteractiveConsole = $false }
@@ -60,6 +90,10 @@ function Test-InputQueueDrained {
 function Test-InputDataAvailable { return Test-InputQueueDrained }
 
 function Read-ByteFromInput {
+  <#
+  .SYNOPSIS
+      Returns the next input byte, blocking until one is available.
+  #>
   Initialize-InputStreams
   while ($script:pendingByteQueue.Count -eq 0) {
     Start-AsyncInputRead
@@ -70,6 +104,10 @@ function Read-ByteFromInput {
 }
 
 function Clear-OsPipeBuffers {
+  <#
+  .SYNOPSIS
+      Drains any completed async input reads into the pending queue.
+  #>
   Initialize-InputStreams
   if ($null -ne $script:currentReadTask -and $script:currentReadTask.IsCompleted) {
     $bytesRead = Complete-AsyncInputRead
@@ -84,6 +122,10 @@ function Clear-OsPipeBuffers {
 }
 
 function Read-AllAvailableText {
+  <#
+  .SYNOPSIS
+      Reads all currently available input text within a short deadline.
+  #>
   if ($null -ne $script:currentReadTask) {
     if ($script:currentReadTask.IsCompleted) {
       [void]$script:currentReadTask.GetAwaiter().GetResult()
@@ -122,6 +164,10 @@ function Read-AllAvailableText {
 }
 
 function Read-PastedText {
+  <#
+  .SYNOPSIS
+      Reads pending bytes as pasted text with LF normalization.
+  #>
   Clear-OsPipeBuffers
   $count = $script:pendingByteQueue.Count
   if ($count -eq 0) { return [string]::Empty }
@@ -133,18 +179,22 @@ function Read-PastedText {
   return $text
 }
 
-#endregion
-#region ConsoleKeyInfo Builder
 function Build-ConsoleKeyInfo([char]$ch, [System.ConsoleKey]$key, [System.ConsoleModifiers]$modifiers) {
+  <#
+  .SYNOPSIS
+      Constructs a ConsoleKeyInfo value from its parts.
+  #>
   return [System.ConsoleKeyInfo]::new($ch, $key,
     ($modifiers -band [System.ConsoleModifiers]::Shift) -ne 0,
     ($modifiers -band [System.ConsoleModifiers]::Alt) -ne 0,
     ($modifiers -band [System.ConsoleModifiers]::Control) -ne 0)
 }
 
-#endregion
-#region Escape Sequence Parser
 function ConvertFrom-EscapeSequence([string]$sequence) {
+  <#
+  .SYNOPSIS
+      Parses a CSI escape sequence into a ConsoleKeyInfo.
+  #>
   if ($sequence.StartsWith('[')) {
     $param = $sequence.Substring(1)
     switch ($param) {
@@ -193,9 +243,14 @@ function ConvertFrom-EscapeSequence([string]$sequence) {
   return Build-ConsoleKeyInfo ([char]0) ([System.ConsoleKey]::NoName) 0
 }
 
-#endregion
-#region Read Input Event
 function Read-InputEvent {
+  <#
+  .SYNOPSIS
+      Reads the next input event from the console.
+  .DESCRIPTION
+      Handles raw bytes, escape sequences, paste bracketing, and SGR mouse
+      reports. Returns a PSCustomObject with Kind='Key' or Kind='Paste'.
+  #>
   $firstByte = Read-ByteFromInput
   if ($firstByte -eq -1) {
     return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo ([char]26) ([System.ConsoleKey]::Z) ([System.ConsoleModifiers]::Control)) }
@@ -289,6 +344,7 @@ function Read-InputEvent {
   }
 
   [byte[]]$utf8Bytes = @($firstByte)
+  # UTF-8 lead byte determines how many continuation bytes follow.
   if ($firstByte -ge 0xC0) {
     $extra = if ($firstByte -ge 0xF0) { 3 } elseif ($firstByte -ge 0xE0) { 2 } else { 1 }
     for ($i = 0; $i -lt $extra; $i++) { $utf8Bytes += Read-ByteFromInput }
@@ -298,16 +354,21 @@ function Read-InputEvent {
   return [PSCustomObject]@{ Kind = 'Key'; KeyInfo = (Build-ConsoleKeyInfo $char $ck 0) }
 }
 
-#endregion
-#region Terminal Sequences
 $script:SEQ_MOUSE_TRACKING_OFF = "`e[?1000l`e[?1002l`e[?1003l"
 $script:SEQ_AUTOWRAP_OFF = "`e[?7l"
 $script:SEQ_AUTOWRAP_ON = "`e[?7h"
 
 function Set-ScrollMargins([int]$top, [int]$bottom) {
+  <#
+  .SYNOPSIS
+      Sets the terminal scroll region to [top, bottom].
+  #>
   Write-OutputBuffer "`e[$top;${bottom}r"
 }
 function Reset-ScrollMargins() {
+  <#
+  .SYNOPSIS
+      Resets the terminal scroll region to the full window.
+  #>
   Write-OutputBuffer "`e[r"
 }
-#endregion

@@ -1,6 +1,24 @@
+<#
+.SYNOPSIS
+    Entry point for the babae terminal editor session.
+.DESCRIPTION
+    Initializes the editor, loads the target file or creates a new buffer,
+    enters the main render loop, and restores the terminal on exit.
+.NOTES
+    Degrades gracefully when I/O is redirected (tests, pipes) by skipping
+    raw console setup.
+#>
+
 $ErrorActionPreference = 'Stop'
 
 function Start-BabaeEditor {
+  <#
+  .SYNOPSIS
+      Starts the babae editor session for an optional file path.
+  .DESCRIPTION
+      Performs install check, state reset, optional file load, then enters
+      the main loop that renders frames and dispatches input until exit.
+  #>
   param([Parameter(Position = 0)][string]$Path)
 
   trap {
@@ -28,14 +46,15 @@ function Start-BabaeEditor {
   $script:shouldExitApplication = $false
 
   try {
-    # In test environments with redirected I/O, console handles are invalid
-    # Skip TreatControlCAsInput and raw mode if handles are invalid
+    # In test environments with redirected I/O, console handles are invalid.
+    # Skip TreatControlCAsInput and raw mode when handles cannot be prepared.
     $hasValidConsole = -not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected
     if ($hasValidConsole) {
       try { [Console]::TreatControlCAsInput = $true } catch {}
       Enter-RawInputMode
     }
-    Write-OutputBuffer("`e[?1049h`e[?2004h`e[?25l`e[2J`e[3J`e[H")
+
+    # Alternate-buffer entry + cursor hide + screen clear + mouse disable + autowrap disable.
     Write-OutputBuffer("`e[?1049h`e[?2004h`e[?25l`e[2J`e[3J`e[H")
     Write-OutputBuffer($script:SEQ_MOUSE_TRACKING_OFF)
     Write-OutputBuffer($script:SEQ_AUTOWRAP_OFF)

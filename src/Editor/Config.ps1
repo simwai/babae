@@ -1,3 +1,13 @@
+<#
+.SYNOPSIS
+    Editor configuration loader and EditorConfig parser.
+.DESCRIPTION
+    Loads .editorconfig settings, provides glob-to-regex conversion, and
+    exposes accessors for indentation and command bindings.
+.NOTES
+    Settings are loaded per-file and cached in script scope.
+#>
+
 $ErrorActionPreference = 'Stop'
 
 #region Editor Config Settings
@@ -28,6 +38,13 @@ $script:commandBindingDefinitions = @(
 #endregion
 #region Glob To Regex
 function ConvertFrom-EditorConfigGlobToRegex([string]$glob) {
+  <#
+  .SYNOPSIS
+      Converts an EditorConfig glob pattern to an anchored regex.
+  .DESCRIPTION
+      Handles single-star, double-star, single-char wildcards, and escapes
+      regex metacharacters so the result can be used with -match.
+  #>
   $sb = [System.Text.StringBuilder]::new()
   [void]$sb.Append('^')
   for ($i = 0; $i -lt $glob.Length; $i++) {
@@ -52,6 +69,13 @@ function ConvertFrom-EditorConfigGlobToRegex([string]$glob) {
 }
 
 function Test-EditorConfigSectionMatch([string]$pattern, [string]$relativePath) {
+  <#
+  .SYNOPSIS
+      Tests whether a relative path matches an EditorConfig section pattern.
+  .DESCRIPTION
+      Normalizes path separators and applies the glob-derived regex against
+      the full relative path or the filename alone when the pattern has no slash.
+  #>
   $norm = $relativePath -replace '\\', '/'
   $rx = ConvertFrom-EditorConfigGlobToRegex $pattern
   if ($pattern.Contains('/')) { return $norm -match $rx }
@@ -61,6 +85,13 @@ function Test-EditorConfigSectionMatch([string]$pattern, [string]$relativePath) 
 #endregion
 #region Load EditorConfig
 function Import-EditorConfig([string]$filePath) {
+  <#
+  .SYNOPSIS
+      Loads .editorconfig settings from the target file path upward to root.
+  .DESCRIPTION
+      Walks parent directories, collects .editorconfig files, and applies
+      the last matching section's settings into script-scope config.
+  #>
   $script:editorConfigSettings.indent_style = "space"
   $script:editorConfigSettings.indent_size = 4
   $script:editorConfigSettings.tab_width = 4
@@ -111,20 +142,31 @@ function Import-EditorConfig([string]$filePath) {
   $script:editorState.StatusMessage = ' .editorconfig loaded '
 }
 
-#endregion
-#region Indentation String
 function Get-IndentationString {
+  <#
+  .SYNOPSIS
+      Returns the active indentation string based on editor config.
+  .DESCRIPTION
+      Resolves whether the project uses tabs or spaces and returns the
+      appropriate string. Centralizes the calculation so callers do not
+      repeat the conditional.
+  #>
   if ($script:editorConfigSettings.indent_style -eq 'tab') { return "`t" }
   return ' ' * [Math]::Max(1, $script:editorConfigSettings.indent_size)
 }
 
-#endregion
-#region Accessors
 function Get-EditorConfigSettings {
+  <#
+  .SYNOPSIS
+      Returns a copy of the current editor config settings.
+  #>
   return $script:editorConfigSettings
 }
 
 function Get-CommandBindingDefinitions {
+  <#
+  .SYNOPSIS
+      Returns the command binding definitions for the status bar.
+  #>
   return $script:commandBindingDefinitions
 }
-#endregion

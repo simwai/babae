@@ -1,6 +1,18 @@
+<#
+.SYNOPSIS
+    Cross-platform clipboard access for the editor.
+.DESCRIPTION
+    Detects the available clipboard tool for the current platform and
+    provides get/set operations with graceful fallback when no tool is found.
+#>
+
 $ErrorActionPreference = 'Stop'
 
 function Find-ClipboardTool {
+  <#
+  .SYNOPSIS
+      Detects the available clipboard mechanism for the current platform.
+  #>
   if ($IsWindows -or $env:OS -eq 'Windows_NT') { return 'WinForms' }
   if ($IsMacOS) { return 'pbcopy' }
   if (Get-Command wl-copy -ErrorAction SilentlyContinue) { return 'wl-copy' }
@@ -10,6 +22,10 @@ function Find-ClipboardTool {
 }
 
 function Get-ClipboardContent {
+  <#
+  .SYNOPSIS
+      Returns the current clipboard text, or an empty string when unavailable.
+  #>
   $tool = Find-ClipboardTool
   try {
     switch ($tool) {
@@ -24,6 +40,10 @@ function Get-ClipboardContent {
 }
 
 function Set-ClipboardContent([string]$text) {
+  <#
+  .SYNOPSIS
+      Writes text to the system clipboard.
+  #>
   if ([string]::IsNullOrEmpty($text)) { return }
   $tool = Find-ClipboardTool
   try {
