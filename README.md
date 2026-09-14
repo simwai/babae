@@ -49,7 +49,6 @@ Its primary reason for existence: most terminal editors misbehave when pasting i
 - **Incremental Search**: Live highlighting across the buffer with `^F`.
 - **Cross-Platform Clipboard**: `^C` / `^V` via `xclip` / `xsel` / `wl-copy` on Linux (X11 and Wayland), `pbcopy` / `pbpaste` on macOS, `System.Windows.Forms.Clipboard` on Windows.
 - **`.editorconfig` Support**: Picks up `indent_style`, `indent_size`, `end_of_line`, `trim_trailing_whitespace`, `insert_final_newline`, and `charset` from the nearest `.editorconfig`.
-- **Mouse Right-Click Paste on Windows**: Win32 console API integration for native right-click paste events.
 - **Language Detection**: Automatic language label in the header based on file extension (see [Language Detection](#language-detection)).
 - **Global Install**: On first run outside `~/.babae/`, babae offers to install itself globally and register a `babae` shell function in your PowerShell profile.
 
@@ -142,7 +141,6 @@ pwsh ./babae.ps1 myfile.txt -Theme mocha
 | `Enter` | New line |
 | `Tab` | Insert indent / autocomplete |
 | `Esc` | Cancel search / clear selection |
-| `RightClick` | Paste from clipboard (Windows only) |
 
 ## Themes
 
