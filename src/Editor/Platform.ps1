@@ -44,7 +44,7 @@ function Enter-RawInputMode {
         public const uint ENABLE_QUICK_EDIT_MODE = 0x0040;
         public const uint ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200;
     }
-    '@ -ErrorAction SilentlyContinue
+'@ -ErrorAction SilentlyContinue
 
     $handle = [ConsoleRaw]::GetStdHandle([ConsoleRaw]::STD_INPUT_HANDLE)
     [uint]$mode = 0

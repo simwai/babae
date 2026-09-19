@@ -1,6 +1,8 @@
-# Build output
+﻿# Build output
 /dist/
 
 # .NET
 src/Launcher/bin/
 src/Launcher/obj/
+.session-locks/
+.playwright-mcp/
