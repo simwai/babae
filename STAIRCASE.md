@@ -39,12 +39,12 @@ When BPM is enabled, the terminal wraps the paste payload:
 babae does not use `Console.ReadKey` to process terminal input. It puts the input into raw mode and reads bytes from stdin, which allows the BPM prefix to be seen reliably even when the session is running over SSH or stdin is redirected.
 
 - **Detection:** `Read-InputEvent` assembles an escape sequence byte by byte. When it recognizes `ESC [ 200 ~`, it returns a `Paste` event instead of a normal key event.
-- **Verbatim insertion:** `Read-PastedText` drains the bytes already buffered after the prefix, decodes them as UTF-8, and normalizes CRLF/CR to LF. The main loop sends the resulting text to `Paste-TextFromClipboard`.
-- **The bypass:** `Paste-TextFromClipboard` inserts the complete text into the buffer in one operation. It does not call `Handle-EditingKey`, so the embedded newlines never reach the normal Enter handler and cannot trigger indentation logic. The BPM markers are also removed defensively if they are present in the drained text.
-- **Manual Enter remains separate:** A manually typed Enter is handled by `Handle-EditingKey` and inserts only a newline. It does not copy the current line's indentation. This independently prevents indentation from compounding if input is received outside the paste path.
+- **Verbatim insertion:** `Read-PastedText` drains the bytes already buffered after the prefix, decodes them as UTF-8, and normalizes CRLF/CR to LF. The main loop sends the resulting text to `Insert-TextFromClipboard`.
+- **The bypass:** `Insert-TextFromClipboard` inserts the complete text into the buffer in one operation. It does not call `Invoke-EditingKey`, so the embedded newlines never reach the normal Enter handler and cannot trigger indentation logic. The BPM markers are also removed defensively if they are present in the drained text.
+- **Manual Enter remains separate:** A manually typed Enter is handled by `Invoke-EditingKey` and inserts only a newline. It does not copy the current line's indentation. This independently prevents indentation from compounding if input is received outside the paste path.
 
 ### 4. Clipboard paste is a separate path
-`Ctrl+V` calls `Get-ClipboardContent`, using Windows Forms on Windows or `pbpaste`, `wl-paste`, `xclip`, or `xsel` on Unix-like systems. The returned text is passed to the same `Paste-TextFromClipboard` insertion function, so it also bypasses the key-by-key Enter path. A terminal right-click paste does not use those clipboard tools; it arrives as a BPM-framed stdin stream.
+`Ctrl+V` calls `Get-ClipboardContent`, using Windows Forms on Windows or `pbpaste`, `wl-paste`, `xclip`, or `xsel` on Unix-like systems. The returned text is passed to the same `Insert-TextFromClipboard` insertion function, so it also bypasses the key-by-key Enter path. A terminal right-click paste does not use those clipboard tools; it arrives as a BPM-framed stdin stream.
 
 The raw reader does wait briefly while reassembling an escape sequence, but it does not implement a separate adaptive 2000 ms paste timer or a paste state machine keyed off the closing marker. The current fix therefore relies on byte-level prefix detection, direct buffer insertion, defensive marker stripping, and the non-indenting manual Enter handler.
 
