@@ -1,4 +1,4 @@
-# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
+﻿# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
 PackageIdentifier: simwai.babae
 PackageVersion: 0.1.0
 InstallerType: portable
@@ -10,6 +10,6 @@ Commands:
 Installers:
 - Architecture: x64
   InstallerUrl: https://gitlab.com/api/v4/projects/simwai%2Fbabae/packages/generic/babae/0.1.0/babae-0.1.0.zip
-  InstallerSha256: 51514A0C1301628CF62EA98695805A68AEA166544400CF78A4AB0443AB4CB3A9
+  InstallerSha256: 92EA166454B1F3FE2545379C7A50BB9B4E1FE4AA1439A330227E3A6462321F17
 ManifestType: installer
 ManifestVersion: 1.12.0

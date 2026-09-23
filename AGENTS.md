@@ -70,6 +70,14 @@ Servers are grouped by what works when env keys are missing. Configure the ones 
   "playwright-headless": {
     "command": "npx",
     "args": ["-y", "@playwright/mcp@0.0.80", "--headless"]
+  },
+  "g-search": {
+    "command": "npx",
+    "args": ["-y", "g-search-mcp"]
+  },
+  "arxiv": {
+    "command": "uvx",
+    "args": ["arxiv-mcp-server"]
   }
 }
 ```
@@ -78,22 +86,24 @@ Servers are grouped by what works when env keys are missing. Configure the ones 
 **Playwright** - browser automation for live UI verification and e2e walk-throughs (Node 20+; headed for testing)
 **Playwright-headless** - headless browser for web search and scraping (Node 20+; `--headless` flag)
 **Playwright bootstrap** — run `scripts/ensure-playwright.ps1` before first use or after fresh clones; checks Node ≥ 20, resolves `@playwright/mcp`, installs missing browser binaries.
+**g-search** - Google web search via MCP (no key required; requires Playwright Chromium: `npx playwright install chromium`)
+**arXiv** - academic paper search and local literature management via MCP (no key required; requires `uvx`; bootstrap: `scripts/ensure-uvx.ps1`)
 
 **OpenCode PTY** — interactive terminal plugin: background processes, multiple sessions, stdin, output regex filter. Auto-installed by OpenCode on next run.
 
-### Tier 2 - Requires env keys (optional - only configure if key available)
+### Tier 2 - OAuth (no env keys required)
 
 ```json
 {
   "exa": {
-    "type": "http",
+    "type": "remote",
     "url": "https://mcp.exa.ai/mcp",
-    "headers": { "x-api-key": "${EXA_API_KEY}" }
+    "oauth": {}
   }
 }
 ```
 
-> **Note**: Omit this entire block if `EXA_API_KEY` is not set. The agent will use Google curl search as the no-key fallback per `00-system.md`.
+> **Note**: Omit this entire block if `EXA_API_KEY` is not set. The agent will use `g-search` as the no-key fallback per `00-system.md`.
 
 ### Trello - Remote OAuth (no env keys)
 
@@ -111,7 +121,7 @@ Work tracking (cards, boards, lists, tasks, PR/issue/CI status) lives in Trello.
 
 ### Web search without keys
 
-Google web search must never require `GOOGLE_API_KEY` / `GOOGLE_SEARCH_ENGINE_ID`. Default is direct curl to Google's URL format:
+Google web search must never require `GOOGLE_API_KEY` / `GOOGLE_SEARCH_ENGINE_ID`. Default is the `g-search` MCP server when available, with direct curl to Google's URL format as the last resort:
 
 ```bash
 curl -s "https://www.google.com/search?q=<url-encoded-query>"
@@ -127,7 +137,7 @@ Combine all Tier 1 + Tier 2 + Trello blocks above. Omit any Tier 2 servers whose
 
 | Variable | Server | Required |
 |---|---|---|
-| `EXA_API_KEY` | Exa | No (skipped if missing) |
+| `EXA_API_KEY` | Exa | No (OAuth used instead) |
 
 ---
 

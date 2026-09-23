@@ -24,18 +24,18 @@ function Merge-Modules {
   Write-Step "Merging editor modules into single-file distribution"
 
   $moduleFiles = @(
-    "Themes.ps1"
-    "Input.ps1"
-    "State.ps1"
-    "Clipboard.ps1"
-    "Config.ps1"
-    "Syntax.ps1"
-    "Renderer.ps1"
-    "Keys.ps1"
-    "Dialogs.ps1"
-    "Platform.ps1"
-    "Install.ps1"
-    "Main.ps1"
+    "themes.ps1"
+    "input.ps1"
+    "state.ps1"
+    "clipboard.ps1"
+    "config.ps1"
+    "syntax.ps1"
+    "renderer.ps1"
+    "keys.ps1"
+    "dialogs.ps1"
+    "platform.ps1"
+    "install.ps1"
+    "main.ps1"
   )
 
   $merged = @()
@@ -76,13 +76,13 @@ function Merge-Modules {
     }
     $content = Get-Content $path -Raw
 
-    # Remove the param block from Main.ps1 since we handle params in the merged file
-    if ($module -eq "Main.ps1") {
+    # Remove the param block from main.ps1 since we handle params in the merged file
+    if ($module -eq "main.ps1") {
       $content = $content -replace '(?s)^param\(.*?\n\)\n\s*\n', ''
     }
 
     # Remove duplicate $ErrorActionPreference = "Stop" from modules (keep first)
-    if ($module -ne "Themes.ps1") {
+    if ($module -ne "themes.ps1") {
       $content = $content -replace '^\$ErrorActionPreference = "Stop"\s*\n', ''
     }
 
