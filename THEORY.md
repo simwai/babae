@@ -72,7 +72,7 @@ The terminal is controlled via "In-band signaling" using Escape Sequences. Most 
 - **Hide/Show Cursor:** `ESC [ ? 25 l` (Hide), `ESC [ ? 25 h` (Show).
 
 ### Input Sequences:
-When you press a key like `Up Arrow`, the terminal sends `ESC [ A`. babae's `Parse-EscapeSequence` function is responsible for mapping these back to logical actions.
+When you press a key like `Up Arrow`, the terminal sends `ESC [ A`. babae's `ConvertFrom-EscapeSequence` function is responsible for mapping these back to logical actions.
 
 ---
 
