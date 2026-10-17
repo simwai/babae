@@ -32,6 +32,32 @@ Verification (build/smoke/tests/Playwright) is the one place the evidence chain 
 
 A pass assertion that breaks this rule is a protocol breach.
 
+## Template Field Contract
+
+This section defines which fields in each phase template are required and which are optional. Required fields must appear in the output; optional fields may be omitted when their trigger condition is unmet. Empty optional fields are omitted, not filled with placeholders.
+
+- `[required]` — the field must be present in the output for the phase to be valid.
+- `[optional]` — the field may be omitted when its trigger condition is unmet.
+
+Template field requirements:
+
+- `BLOCKED`: `Reason` [required]; `Needed now` [required]; `Next required user action` [required]; `Status` [required].
+- `INTAKE`: `Goal` [required]; `Stack/Style` [required]; `Scope` [required]; `Target repo` [required]; `Success criteria` [required]; `Milestones` [required]; `Open questions` [optional]; `Status` [required].
+- `BACKLOG`: `Milestone map` [required]; `Items` [required]; `Split candidates` [optional]; `Allowed next move` [required].
+- `SPRINT`: `Sprint` [required]; `Serves milestone` [required]; `Selected items` [required]; `Board` [required]; `Completion criteria` [required]; `Allowed next move` [required].
+- `TASK_PLAN`: `Task` [required]; `Target` [required]; `Type` [required]; `Scope` [required]; `Size` [required]; `ICE` [required]; `Milestone` [required]; `Story` [optional]; `MVP` [optional]; `Test-first` [optional]; `Definition of done` [required]; `Allowed next move` [required].
+- `CHECKLIST`: `Target scope` [required]; `Focus` [required]; `Scope` [required]; `File inventory` [required]; `System Discovery` [required]; `Pre-review docs log` [required]; `Hard tier` [required]; `Soft tier` [required]; `Logical tier` [optional]; `Verification` [required]; `Batch log` [optional]; `Verdict` [required].
+- `SPEC`: `Path` [required]; `Status` [required]; `User Stories` [required]; `Functional Requirements` [required]; `Success Criteria` [required]; `Assumptions` [optional]; `Open Questions` [optional]; `Allowed next move` [required].
+- `DOCS`: `In scope` [required]; `Verified evidence` [required]; `Status` [required].
+- `REVIEW`: `Multi-file progress` [required]; `Findings` [required]; `Logical Findings` [optional]; `Informational` [optional]; `Confirmed Items` [optional]; `Pending Review Items` [optional]; `Partial Handoff Available` [optional]; `Plan Draft` [optional]; `Decision Items` [optional]; `Cross-team requirements` [optional]; `Verification` [required]; `Decision Needed` [required when findings are present].
+- `PLAN`: `Target` [required]; `Scope` [required]; `Scope type` [required]; `Pending review items` [required]; `Source` [required]; `System Constraints` [required]; `Will change` [required]; `Will preserve` [required]; `Conventions` [required]; `Risks` [optional]; `Logical constraints` [optional]; `Awaiting` [required].
+- `PATCH`: `Rewrite Contract` [required]; `Patch` [required]; `Self-Review` [required]; `Compliance Audit` [required]; `Constraint Verification` [required]; `Verification` [required]; `Plan-Actual` [required when plan exists]; `Commit/Push Gate` [required when edits exist].
+- `DRIFT`: `Spec` [required]; `Registry check` [required]; `Verified claims` [optional]; `Diverged claims` [optional]; `Orphaned mappings` [optional]; `Code-exceeds-spec` [optional]; `HALT` [optional]; `Fresh-eyes review` [optional]; `Exit` [required].
+- `DESIGN_PLAN`: `Target` [required]; `Scope` [required]; `Design decisions` [required]; `Constraints` [required]; `Verification` [required]; `Allowed next move` [required].
+- `HANDOFF`: `For the human` [required]; `For the agent` [required]; `Persona Handoff Contract` [required]; `Status` [required].
+- `TEST_STRATEGY`: `Test Strategy` [required]; `Binding items` [required]; `Strong hints` [required]; `Weak hints` [optional].
+- `FAILURE`: `Status` [required]; `Reason` [required]; `Last valid phase` [required]; `Failed phase` [required]; `Retry` [required].
+
 ## Dual-section output (human + agent)
 
 A structured phase output may split into a plain-language section for the human reader and a machine-checkable section for the receiving agent:
@@ -146,6 +172,7 @@ Allowed next move:
 # Task Card
 Task: [id] -- [one-line description]
 Target: [file/module or TBD]
+Type: [bugfix | feature | refactor]
 Scope:
 - In: [in scope]
 - Out: [out of scope]
@@ -153,7 +180,6 @@ Size: [XS/S/M/L] -- [LOC band sanity check]
 ICE: [I*C*E]
 Milestone: [id]
 Story: [story id or n/a]
-Parallel: [P] [yes|no] -- [runs in parallel with which task ids]
 MVP: [core|supporting] -- [mvp-first ordering within the story]
 Test-first: [yes|no] -- [plan-level ordering signal; never a test-authoring grant]
 Definition of done:
@@ -172,12 +198,24 @@ Allowed next move:
 # Review Session Checklist
 Target scope: [scope description, e.g. "src/" or "all .ts files"]
 Focus: [what to look for]
+Scope: [bugfix | feature | refactor] -- [one-line description]
 
 File inventory:
 - [ ] [file path] -- [LOC] -- pending -- [discovery: keyword-match(N), entry-dist(N), layer:X, test:Y/N]
 - [ ] [file path] -- [LOC] -- pending (large, will chunk) -- [discovery: ...]
 (status: pending | reviewing | complete)
 Source: [discovery | manual | task-card]
+
+## System Discovery (auto-populated, agent cannot modify)
+
+System evidence: [see session state system_evidence block]
+Pattern owner: [module] (confidence: [high|medium|low]) [file:line]
+Existing utilities: [list or "none"]
+Available libraries: [list or "none"]
+Dominant idiom: [pattern] at [file:line] (frequency: N)
+Rules triggered: [list of H-rules from system_evidence]
+Architecture flags: [list from system_evidence or "none"]
+Status: [complete | blocked]
 
 Pre-review docs log:
 - [ ] Library / version / URL recorded
@@ -198,7 +236,34 @@ Hard tier:
 - [ ] H10
 - [ ] H11
 - [ ] H12
-  - Greenfield skip: mark `[x] H1-H12 -- skipped (greenfield)` when CHECKLIST/REVIEW are skipped per the greenfield branch.
+- [ ] H13
+- [ ] H14
+- [ ] H15
+- [ ] H16
+- [ ] H17
+- [ ] H18
+- [ ] H19
+- [ ] H20
+- [ ] H21
+- [ ] H22
+- [ ] H23
+- [ ] H24
+- [ ] H25
+- [ ] H26
+- [ ] H27
+- [ ] H28
+- [ ] H29
+- [ ] H30
+- [ ] H31
+- [ ] H32
+- [ ] H33
+- [ ] H34
+- [ ] H35
+- [ ] H36
+- [ ] H37
+- [ ] H38
+- [ ] H39
+  - Greenfield skip: mark `[x] H1-H39 -- skipped (greenfield)` when CHECKLIST/REVIEW are skipped per the greenfield branch.
 
 Soft tier:
 - [ ] S1
@@ -221,17 +286,18 @@ Soft tier:
   - Greenfield skip: mark `[x] S1-S17 -- skipped (greenfield)` when CHECKLIST/REVIEW are skipped per the greenfield branch.
 
 Logical tier (L1-L10):
-- [ ] L1
-- [ ] L2
-- [ ] L3
-- [ ] L4
-- [ ] L5
-- [ ] L6
-- [ ] L7
-- [ ] L8
-- [ ] L9
-- [ ] L10
+- [ ] L1 -- [blocking|advisory]
+- [ ] L2 -- [blocking|advisory]
+- [ ] L3 -- [blocking|advisory]
+- [ ] L4 -- [blocking|advisory]
+- [ ] L5 -- [blocking|advisory]
+- [ ] L6 -- [blocking|advisory]
+- [ ] L7 -- [blocking|advisory]
+- [ ] L8 -- [blocking|advisory]
+- [ ] L9 -- [blocking|advisory]
+- [ ] L10 -- [blocking|advisory]
   - Greenfield skip: mark `[x] L1-L10 -- skipped (greenfield)` when CHECKLIST/REVIEW are skipped per the greenfield branch.
+  - Blocking vs advisory is determined at discovery time per `04-rubrics.md`.
 
 Verification:
 - Build: pending -- [command]
@@ -303,108 +369,15 @@ Verified evidence:
 Status:
 - Ready for review, or
 - Blocked pending evidence
-```
+## Review mode selection
 
-## `DOCS_PARALLEL` template
+REVIEW has two cadences: `interactive` and `consolidated`. The agent selects the cadence at REVIEW entry using the first match below:
 
-```txt
-[PHASE: DOCS_PARALLEL]
+- Explicit user override: `/review-consolidated` or `/review-interactive` command sets `review_mode` in session state.
+- Auto-select: when the file inventory has >10 files or >20 estimated batches, default to `consolidated`; otherwise default to `interactive`.
+- The user may change modes at any time with the slash commands.
 
-# For the human
-[2-4 plain-language sentences: parallel docs lookup launched, multiple dependency types being researched concurrently]
-
-# For the agent
-
-# Parallel Lookup Groups
-Groups: [npm: N deps, pip: M deps, cargo: K deps, go: L deps, maven: P deps, gradle: Q deps]
-Active: [group name] -- [current dep / total] -- [status]
-Completed: [group name] -- [evidence recorded]
-
-# Lookup State (partitioned per group)
-npm:
-  Dependencies: [dep1, dep2, ...]
-  Evidence: [count] provisional
-  Status: [in-progress|complete|failed]
-pip:
-  Dependencies: [dep1, dep2, ...]
-  Evidence: [count] provisional
-  Status: [in-progress|complete|failed]
-cargo:
-  Dependencies: [dep1, dep2, ...]
-  Evidence: [count] provisional
-  Status: [in-progress|complete|failed]
-go:
-  Dependencies: [dep1, dep2, ...]
-  Evidence: [count] provisional
-  Status: [in-progress|complete|failed]
-maven:
-  Dependencies: [dep1, dep2, ...]
-  Evidence: [count] provisional
-  Status: [in-progress|complete|failed]
-gradle:
-  Dependencies: [dep1, dep2, ...]
-  Evidence: [count] provisional
-  Status: [in-progress|complete|failed]
-
-Aggregation: [pending|complete]
-Output: Unified evidence written to main session state on aggregation complete
-```
-
-This phase runs automatically when CHECKLIST detects multiple dependency types. Subagents spawned per dependency type with partitioned evidence collection (max 3 concurrent). The aggregation step produces unified evidence for the consolidated REVIEW phase.
-```
-
-## `PARALLEL_REVIEW` template
-
-```txt
-[PHASE: PARALLEL_REVIEW]
-
-# For the human
-[2-4 plain-language sentences: parallel review launched, N reviewers + tester reviewing concurrently]
-
-# For the agent
-
-# Parallel Progress
-Sensei-1: [phase] -- [current batch/total] -- [status] -- [layer: controllers]
-Sensei-2: [phase] -- [current batch/total] -- [status] -- [layer: services]
-Sensei-N: [phase] -- [current batch/total] -- [status] -- [layer: utils]
-Tester: [phase] -- [current batch/total] -- [status]
-Merge: [pending|complete]
-Reviewers: N (adaptive, 1 per 20 files)
-
-# Sensei State 1 (partitioned)
-Review cursor: [file:batch]
-Findings: [count] provisional
-Open questions: [count]
-Review decision: [pending|complete]
-Layer: controllers
-
-# Sensei State 2 (partitioned)
-Review cursor: [file:batch]
-Findings: [count] provisional
-Open questions: [count]
-Review decision: [pending|complete]
-Layer: services
-
-# Sensei State N (partitioned)
-Review cursor: [file:batch]
-Findings: [count] provisional
-Open questions: [count]
-Review decision: [pending|complete]
-Layer: utils
-
-# Tester State (partitioned)
-Review cursor: [file:batch]
-Findings: [count] provisional
-Test strategy: [draft|complete]
-Binding items: [count]
-Strong hints: [count]
-
-Merge protocol: See 07-protocols.md `## REVIEW Merge Protocol`
-Output: Unified findings written to main session state on merge complete
-```
-
-This phase runs automatically when CHECKLIST inventory > 1 file and not greenfield. Partitions file inventory by architectural layer (controllers/, services/, repositories/, middleware/, components/, hooks/, stores/, utils/, tests/); spawns N BabaSensei reviewers (N = max(1, ceil(files / 20))) + BabaTester. The merge step produces unified findings for the consolidated REVIEW phase.
-```
+In `interactive` mode, the agent emits one batch per response and waits for user confirmation before advancing. In `consolidated` mode, the agent reviews all files and batches internally, then emits one final REVIEW response with `Batch: AGGREGATE -- all files complete` and a single aggregate `# Decision Needed` block. Consolidated mode never auto-confirms findings; all mitigations remain provisional until the user answers the aggregate decision section.
 
 ## `REVIEW` template
 
@@ -420,7 +393,6 @@ the one decision you must confirm]
 # Multi-file progress
 Reviewed: [X/Y] files -- [Z] batches complete
 Review mode: [interactive|consolidated]
-Parallel progress: [sensei-1: batch N/M, sensei-2: batch N/M, ..., tester: batch N/M | merged: pending|complete]
 
 # Findings
 File: [file path or ALL FILES]
@@ -444,6 +416,20 @@ Validation loop (run when any finding is at confidence <= 70%):
 - Passes run: [fingerprint 1] -> [result] / [fingerprint 2] -> [result] / [fingerprint 3] -> [result] (or "terminated early: no new evidence at pass N")
 - Final confidence: [X]%
 - Terminal classification: [confirmed | disputed]
+
+## Logical Findings
+- [criterion id] -- [line/range] -- [one-sentence logical issue] ([severity: blocking|advisory])
+  - Severity: [blocking|advisory] -- [one-line rationale]
+  - Mitigations:
+    - **A.** [short action] (Recommended)
+      - Pros: [one line]
+      - Cons: [one line]
+    - B. [short action]
+      - Pros: [one line]
+      - Cons: [one line]
+    - C. [short action, if needed]
+      - Pros: [one line]
+      - Cons: [one line]
 
 ## Informational (when applicable)
 - [criterion id] -- [line/range] -- [one-sentence note]
@@ -496,6 +482,9 @@ Please confirm:
 
 Next batch:
 - [file path] -- [lines X-Y or FULL] -- [next batch, or "all files complete - confirm aggregate decision before PLAN"]
+
+Sections omitted (when applicable):
+- [Cross-team requirements / Validation loop / Open questions / Informational / Confirmed Items / Pending Review Items / Partial Handoff Available / Plan Draft -- list the omitted sections and why]
 ```
 
 REVIEW owns confirmation. There is no standalone CONFIRM phase.
@@ -534,15 +523,36 @@ decision you must approve]
 # Fix Plan
 Target: [file/module]
 Scope: [full|partial]
+Scope type: [bugfix | feature | refactor]
 Pending review items: [list of finding_ids still under review, or "none"]
 
 Source: [auto-generated from REVIEW findings | manual]
 
+## System Constraints (from Discovery Protocol)
+Must use:
+- <module.method> (<file:line>) [rule: H15]
+
+Must not duplicate:
+- <file:lines> -- <pattern> [rule: H13]
+
+Must route through:
+- <layer> [rule: H16]
+
+Must use available library:
+- <name> (<version>) [rule: H14]
+
+Rule exceptions (auto-granted):
+- H<number>: <reason from system_evidence>
+
+Architecture flags:
+- <flag_type>: <details> [from system_evidence]
+
+Agent writes only:
 Will change:
-- id: [unique id]
-  change: [change]
-  verify: [command -- idempotent read-only check, max 2 KiB]
-  expect: [pass|fail|exit:N|regex:<pat>|contains:<s>|silent]
+- id: <unique id>
+  change: <change description - agent controls this only>
+  verify: <system-generated rg command>
+  expect: <pass|fail|exit:N|regex:<pat>|contains:<s>|silent>
 
 The runner MUST execute each verify command automatically after staging and before the commit/push ask; emitting the command text without running it is a gate FAIL.
 
@@ -556,6 +566,9 @@ Conventions:
 
 Risks:
 - [risk]
+
+Logical constraints:
+- [constraint from L-tier findings that the fix must preserve]
 
 Awaiting:
 - Plan approval
@@ -617,20 +630,71 @@ Forbidden in patch:
 
 - [token/pattern]
 
+Must use:
+
+- [module.method or library] [from System constraints - system populated]
+
+Must route through:
+
+- [owner module.method] [from System constraints - system populated]
+
+Must not duplicate:
+
+- [existing file:line pattern] [from System constraints - system populated]
+
+Must use available library:
+
+- [library] [from System constraints - system populated]
+
+Must follow layer:
+
+- [layer constraint] [from System constraints - system populated]
+
 # Patch
 [code or patch]
+
+# Self-Review
+- [ ] All `Must use` dependencies are called in the patch
+- [ ] No `Must not duplicate` patterns appear in the patch
+- [ ] All `Must use available library` items are used in the patch
+- [ ] All `Must route through` modules are called in the patch
+- [ ] No `Must follow layer` violations in the patch
+- [ ] Scope type respected: [bugfix/feature/refactor] rules applied
+- [ ] Auto-exceptions from system_evidence were honored
+- [ ] No speculative code added (H25)
+- [ ] No dead code added (H33)
+- [ ] No magic values introduced (H34)
+- [ ] No debug prints or sensitive data in logs (H36)
+- [ ] No unsafe casts or `any` type used (H37)
 
 # Compliance Audit
 - [check]: PASS/FAIL
 - [check]: PASS/FAIL
 - Project style policy: PASS|FAIL -- [one-line evidence; FAIL only on a non-greenfield, non-READ_ONLY repo missing STYLE_POLICY.md artifact]
 
+# Constraint Verification
+For each item in Must use:
+- [module.method]: PASS|FAIL -- rg "<module.method>" <target_file>
+
+For each item in Must route through:
+- [owner_module]: PASS|FAIL -- rg "<owner_module>" <target_file>
+
+For each item in Must not duplicate:
+- [file:lines]: PASS|FAIL -- rg "<pattern>" <target_file>
+
+For each item in Must use available library:
+- [library]: PASS|FAIL -- rg "<library_usage>" <target_file>
+
+For each item in Must follow layer:
+- [layer_constraint]: PASS|FAIL -- rg "<forbidden_pattern>" <target_file>
+
+Gate result: ALL PASS required. Any FAIL -> return to PLAN.
+
 # Verification
 - Diff inspected: yes/no -- [summary]
 - Lint gate (per edit step): PASS/FAIL/SKIPPED -- [command] -- [results]
 - Checks run: [commands] or none available
 - Results: PASS/FAIL/SKIPPED -- [notes]
-- Parallel groups: [lint+typecheck: sequential], [unit: parallel 3/3], [integration: sequential], [e2e: sequential] -- total 45s (vs 78s sequential)
 - Regression baseline (expected FAIL): PASS|FAIL/SKIPPED -- [command] -- [note or SKIPPED reason]
 - Regression post-fix (expected PASS): PASS|FAIL/SKIPPED -- [command] -- [note or SKIPPED reason]
 - Playwright smoke: PASS/FAIL/SKIPPED -- [URL] -- [note]
@@ -711,6 +775,46 @@ Exit:
 - Findings requiring writes -> PLAN (drift_findings and spec_version travel via handoff contract)
 ```
 
+## `DESIGN_PLAN` template
+
+```txt
+[PHASE: DESIGN_PLAN]
+
+# For the human
+[2-4 plain-language sentences: what design decisions were made, what constraints
+BabaDev must preserve, and what the next step is]
+
+# For the agent
+
+# Design Plan
+Target: [file/module/feature]
+Scope: [full|partial]
+
+Design decisions:
+- Palette: [chosen palette] -- [reason]
+- Typography: [chosen stacks] -- [reason]
+- Iconography: [chosen icon set] -- [reason]
+- Component library: [chosen library] -- [reason]
+- Accessibility: [key a11y requirements]
+- SEO: [key SEO requirements]
+- Motion: [motion guidelines]
+- Other: [any additional design decisions]
+
+Constraints:
+- [constraint BabaDev must not break]
+- [constraint]
+
+Verification:
+- Design review completed: [yes/no]
+- Accessibility review completed: [yes/no]
+- SEO review completed: [yes/no]
+- Design tokens defined: [yes/no]
+
+Allowed next move:
+- Approve design plan -> enter HANDOFF (to BabaDev)
+- Revise design decisions
+```
+
 ## `FAILURE` template
 
 ```txt
@@ -753,8 +857,9 @@ startup_fingerprint:
 
 ## Startup Verification
 
-AGENTS.md: [cited rule]
+AGENTS.md: [cited rule] — entry point, sole entry path
 00-system.md: [cited rule] — fingerprint: <line_count> lines, first_100_chars="<first 100 chars>", last_100_chars="<last 100 chars>", sha256_first_1kb="<hash or N/A>"
+02-decision-prompts.md: [cited rule]
 01-personas.md: [cited rule]
 03-output-and-state.md: [cited rule]
 04-rubrics.md: [cited rule]
@@ -764,7 +869,9 @@ AGENTS.md: [cited rule]
 08-plan-actual-gate.md: [cited rule]
 Status: [Complete|Incomplete]
 
-**Load rule**: The initial load of all 8 system files at session start MUST read each file in full with NO chunking (single read per file, largest window). Chunking is only allowed for non-system files after STARTUP is complete.
+All files listed above must be discovered via `ls prompt-system/*.md` and read in full per `00-system.md` `## Load order`. No hard-coded file lists.
+
+**Load rule**: The initial load of all files in the load order at session start MUST read each file in full with NO chunking (single read per file, largest window). Chunking is only allowed for non-system files after STARTUP is complete.
 
 ## Phase Artifacts
 
@@ -830,13 +937,6 @@ plan_actual_history: [list of (timestamp, items, verdict) tuples]
 
 - [server]: [ready|unavailable|not_checked]
 
-## Parallel Budget
-
-parallel_budget: {docs: 3, checklist: 4, patch: 4}
-docs_partitions: [npm, pip, cargo, go, maven, gradle] -- [active subset]
-checklist_partitions: [layer1, layer2, ...] -- [active subset]
-patch_isolated_suites: [suite1, suite2, ...] -- [detected isolated test suites]
-
 ## Drift State
 
 prior_phase: [phase or n/a]
@@ -846,6 +946,10 @@ spec_version: [x.y.z or n/a]
 
 phase_status: {sensei: [phase|n/a], tester: [phase|n/a], dev: [phase|n/a], merge: [pending|complete|n/a]}
 
+## Reinforcement Log
+
+- [timestamp] -- [target files] -- [trigger] -- [scope]
+
 ## Confirmed Items
 
 - [finding_id] -- [file] -- [status: planned|patched|verified] -- [handoff_at]
@@ -853,22 +957,6 @@ phase_status: {sensei: [phase|n/a], tester: [phase|n/a], dev: [phase|n/a], merge
 ## Pending Review Items
 
 - [finding_id] -- [file] -- [status: reviewing] -- [assigned_reviewer]
-
-## Sensei State 1
-
-[partitioned session state for BabaSensei reviewer 1 during PARALLEL_REVIEW; contains review_cursor, findings, open_questions, review_decision, layer]
-
-## Sensei State 2
-
-[partitioned session state for BabaSensei reviewer 2 during PARALLEL_REVIEW; contains review_cursor, findings, open_questions, review_decision, layer]
-
-## Sensei State N
-
-[partitioned session state for BabaSensei reviewer N during PARALLEL_REVIEW; contains review_cursor, findings, open_questions, review_decision, layer]
-
-## Tester State
-
-[partitioned session state for BabaTester during PARALLEL_REVIEW; contains review_cursor, findings, test_strategy, binding_items, strong_hints]
 
 ## Discovery Evidence
 
@@ -881,7 +969,7 @@ phase_status: {sensei: [phase|n/a], tester: [phase|n/a], dev: [phase|n/a], merge
 
 Compare `target`, `scope`, `session_id`, and `spec_version` with the current request before restoring any phase, approval, or rewrite contract. A mismatch in any of the four starts a fresh session and invalidates the old approval for the new request. A legacy file (no `session_id`) is always a mismatch for approval purposes.
 
-**Fresh-session load mandate**: On every fresh session (new session_id or mismatch detected), all 8 system files MUST be reloaded from disk in full with NO chunking. Prior loads from previous sessions NEVER carry over — each session starts with a clean slate and must complete the STARTUP gate independently.
+**Fresh-session load mandate**: On every fresh session (new session_id or mismatch detected), all files in the load order MUST be reloaded from disk in full with NO chunking. Prior loads from previous sessions NEVER carry over — each session starts with a clean slate and must complete the STARTUP gate independently.
 
 ## Incomplete handoff response
 

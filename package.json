@@ -1,0 +1,44 @@
+{
+  "name": "babae",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Zero-dependency TUI editor written in pure PowerShell",
+  "scripts": {
+    "prepare": "husky install",
+    "lint:ps": "pwsh -c \"Invoke-ScriptAnalyzer -Path . -Recurse -Severity Error,Warning -ExcludeRule PSAvoidUsingConvertToSecureStringWithPlainText,PSAvoidUsingPlainTextForPassword\"",
+    "lint:md": "markdownlint \"**/*.md\" --config .markdownlint.jsonc --ignore node_modules --ignore dist",
+    "format:md": "prettier --write \"**/*.md\" --ignore-path .gitignore",
+    "format:yaml": "prettier --write \"**/*.yml\" \"**/*.yaml\" --ignore-path .gitignore",
+    "format:json": "prettier --write \"**/*.json\" --ignore-path .gitignore",
+    "check:secrets": "gitleaks detect --source . --verbose --config .gitleaks.toml"
+  },
+  "devDependencies": {
+    "husky": "^9.0.0",
+    "lint-staged": "^15.0.0",
+    "prettier": "^3.0.0",
+    "markdownlint-cli": "^0.41.0"
+  },
+  "lint-staged": {
+    "*.ps1": [
+      "pwsh -c \"Invoke-ScriptAnalyzer -Path {0} -Severity Error,Warning -ExcludeRule PSAvoidUsingConvertToSecureStringWithPlainText,PSAvoidUsingPlainTextForPassword\""
+    ],
+    "*.md": [
+      "prettier --write",
+      "markdownlint --fix --config .markdownlint.jsonc"
+    ],
+    "*.yml": [
+      "prettier --write",
+      "yamllint -c .yamllint.yml"
+    ],
+    "*.yaml": [
+      "prettier --write",
+      "yamllint -c .yamllint.yml"
+    ],
+    "*.json": [
+      "prettier --write"
+    ]
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

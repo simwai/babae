@@ -49,6 +49,10 @@ BeforeAll {
     $proc = [System.Diagnostics.Process]::new()
     $proc.StartInfo = $psi
     [void]$proc.Start()
+
+    $null = $proc.StandardOutput.ReadToEndAsync()
+    $null = $proc.StandardError.ReadToEndAsync()
+
     @{ Process = $proc; Stdin = $proc.StandardInput }
   }
 
@@ -248,8 +252,8 @@ Describe 'Normal key input still works through raw stdin reader' {
       $lines = $saved -split "`n"
 
       $lines[0] | Should -Be '    foo'
-      # Auto-indent: the new line inherits the 4-space indent (distinct from the staircase bug).
-      $lines[1] | Should -Match '^    '
+      # Enter inserts a plain LF without auto-indent.
+      $lines[1] | Should -Be ''
 
     } finally { Remove-Item $out -Force -ErrorAction SilentlyContinue }
   }

@@ -1,6 +1,6 @@
 # 07-protocols
 
-Cross-cutting protocol details: artifact handling, pre-commit behavior, cross-team requirements, app lifecycle, library selection, session file locks, spec lifecycle, drift detection, discuss mode, and scrum planning. These were merged out of 11 separate deprecated modules; they are protocol detail that PATCH, REVIEW, and PLAN consume. "PATCH rule" sections below are cross-phase constraints that apply when PATCH touches the relevant domain — the PATCH execution protocol lives in `06-misc.md`.
+Cross-cutting protocol details: artifact handling, pre-commit behavior, cross-team requirements, app lifecycle, library selection, session file locks, spec lifecycle, drift detection, discuss mode, scrum planning, and prompt-system protection. These were merged out of 11 separate deprecated modules; they are protocol detail that PATCH, REVIEW, and PLAN consume. "PATCH rule" sections below are cross-phase constraints that apply when PATCH touches the relevant domain — the PATCH execution protocol lives in `06-misc.md`.
 
 ## Artifact handling
 
@@ -16,7 +16,9 @@ Categories and canonical examples:
 - **Test and coverage output**: `coverage/`, `.coverage`, `*.lcov`, `htmlcov/`, `junit.xml`, `test-results/`.
 - **AI session artifacts**: `sessions/`, `chat-export/`, `*.session.txt`, `*.session.md`, `*.session.json`, raw session dumps, exported conversation files, prompt-drafting scratch files. Rule: never commit raw AI session output. Sessions are ephemeral context, not source of truth.
 - **Tooling caches**: `.pre-commit-cache/`, `.mypy_cache/`, `.ruff_cache/`, `.pyrefly_cache/`, `.pytest_cache/`, `.turbo/`, `.next/`, `.nuxt/`, `.svelte-kit/`.
-- **Scratch and WIP files**: `*.tmp`, `*.bak`, `*.orig`, `scratch/`, `todo.md`, `WIP.md` at repo root.
+ - **Scratch and WIP files**: `*.tmp`, `*.bak`, `*.orig`, `scratch/`, `todo.md`, `WIP.md` at repo root.
+ - **OS temp directory**: the only allowed throwaway location is the OS temp directory (`$env:TEMP` on Windows, `/tmp` on Unix). Do not create repo-local temp directories for scratch work; use the OS temp directory instead.
+ - **OS temp directory**: the only allowed throwaway location is the OS temp directory (`$env:TEMP` on Windows, `/tmp` on Unix). Do not create repo-local temp directories for scratch work; use the OS temp directory instead.
 
 ### Review rule
 
@@ -66,6 +68,164 @@ The house preference is LF line endings for every repository, including on Windo
 
 Spawn rule: when a plan or patch sets up a new repo or touches repo hygiene, spawn `.gitattributes` with `* text=auto eol=lf` when the repo lacks one. Extend the existing file in the same patch that normalizes line endings.
 
+## Prompt-system protection
+
+The `prompt-system/` folder and its files are the core system and must be protected from modification when the prompt-system is deployed to a project. These files define the agent's behavior, rules, and conventions; editing them corrupts the system for all projects using it.
+
+### Hard rules
+
+- The `prompt-system/` folder must never be edited as part of a project's work. Changes to the system go through a separate governance session.
+- When deploying the prompt-system to a new project, the `prompt-system/` files are installed as read-only artifacts.
+- Any automated tool or agent must not modify `prompt-system/` files during normal project work.
+- The `prompt-system/` folder is excluded from project-level linting, formatting, and review rules.
+
+### Enforcement
+
+- `07-protocols.md` rule detection (H13-H39) must not fire against `prompt-system/` files. The system reads `STYLE_POLICY.md` for project-level exceptions and treats `prompt-system/` as an always-excluded directory.
+- Pre-commit hooks must not include `prompt-system/` in their staged-file patterns.
+- Discovery Protocol searches must exclude `prompt-system/` from the project source tree.
+
+### Exception
+
+- Updates to the prompt-system itself (new rules, rubric changes, style updates) are performed in a dedicated governance session and deployed via the sync mechanism (`sync.ps1`), not through normal project PATCH flows.
+
+## Discovery Protocol
+
+Trigger: CHECKLIST init for any non-greenfield target.
+
+Search budget: max 15 `rg`/`glob` invocations, max 100 hits.
+
+Search scope excludes `prompt-system/` (core system, never part of project work). All other directories are searched.
+
+### Mandatory searches
+
+1. **Pattern search** - dominant idioms in target file:
+   - Error types: `rg "(Error|Exception|ValidationError)" <target_file>`
+   - Validation calls: `rg "(validate|check|verify|guard)" <target_file>`
+   - Helper imports: `rg "import.*from.*(utils|helpers|services)" <target_file>`
+   - DI patterns: `rg "(new |@Inject|@Injectable|container\.resolve)" <target_file>`
+
+2. **Ownership trace** - who owns the concern:
+   - Forward imports: `rg "import.*<target_module>" src/ --max-count 50`
+   - Reverse imports: `rg "<target_module>" src/ --max-count 50`
+   - Method calls: `rg "<concern_method>" src/ --max-count 50`
+
+3. **Library scan** - available dependencies:
+   - Read manifest: `package.json`, `pyproject.toml`, `Cargo.toml`, `go.mod`
+   - Extract dependency names and versions
+
+4. **Helper search** - existing utilities:
+   - `rg "export.*<concern_type>" src/ --max-count 50`
+   - `rg "function <concern_name>" src/ --max-count 50`
+
+5-15. **Pattern-specific searches** based on discovered idioms (e.g., if validation pattern found, search for all validation utilities).
+
+### Ownership resolution
+
+- Count direct imports + method calls per module
+- Owner = module with highest reference count
+- Tie-breaker: module with oldest git touch (most established)
+- Owner confidence: high (margin >2x), medium (margin 1.5x-2x), low (margin <1.5x)
+
+### Rule detection
+
+For each rule in `rules.md` H13-H39:
+1. Check if rule applies to target file's context
+2. If yes: add to `system_evidence.rule_triggers` with evidence
+3. If rule has auto-exception: evaluate exception conditions
+4. If exception triggered: mark rule as `auto_excepted` with reason
+5. If exception not triggered: mark rule as `active` (must be enforced)
+
+### Architecture doc scanning
+
+Scan for project architecture/style docs:
+- `ARCHITECTURE.md`
+- `ADR/` directory
+- `docs/architecture/`
+- `STYLE_POLICY.md`
+- Module-level `README.md` files
+
+Extract declared rules using pattern matching:
+- "All validation MUST go through X" → `must_use: X`
+- "Controllers must not contain business logic" → `layer_constraint: controller`
+- "Use dependency injection" → `di_required: true`
+
+### Output format
+
+Write to session state as `system_evidence`:
+
+```yaml
+system_evidence:
+  discovered_at: <ISO-8601 UTC>
+  target_file: <path>
+  
+  pattern_owner: <module>
+  pattern_owner_location: <file:line>
+  owner_confidence: high|medium|low
+  
+  must_use:
+    - <module.method> (<file:line>) [rule: H15]
+  
+  must_not_duplicate:
+    - <file:lines> -- <pattern> [rule: H13]
+  
+  must_use_library:
+    - <name> (<version>) [rule: H14]
+  
+  must_route_through:
+    - <layer> [rule: H16]
+  
+  dominant_idiom:
+    type: <error|validation|di|logging>
+    location: <file:line>
+    frequency: <N>
+    confidence: high|medium|low
+  
+  rule_triggers:
+    - rule: H13
+      active: true|false
+      auto_excepted: true|false
+      reason: <if auto-excepted>
+    
+  available_libraries:
+    - <name> (<version>) from <manifest>
+  
+  existing_utilities:
+    - file: <path>
+      lines: <range>
+      pattern: <type>
+  
+  architecture_flags:
+    high_coupling:
+      - module: <path>
+        fan_in: <N>
+        fan_out: <N>
+    circular_dependency:
+      - cycle: [<module_list>]
+    pattern_concentration:
+      - pattern: <description>
+        occurrences: <N>
+        files: [<paths>]
+```
+
+### Exception handling
+
+System reads `STYLE_POLICY.md` for project-level rule exceptions:
+- `rule_exceptions.H13: disabled|advisory|mandatory`
+- `rule_exceptions.H14: disabled|advisory|mandatory`
+- etc.
+
+Project-level exceptions override system defaults. If a rule is disabled for the project, it does not fire. If set to advisory, it flags but doesn't block. If mandatory (default), it blocks on violation.
+
+### Greenfield handling
+
+For greenfield targets (no existing source files):
+- Discovery runs on the project's `05-impl-style.md` defaults and stack conventions
+- `system_evidence` records declared conventions as constraints
+- No ownership resolution (no existing code to own the concern)
+- No duplication detection (no existing utilities)
+- Library scan still runs (from manifest)
+
 ## Pre-commit behavior
 
 Pre-commit hooks (`.pre-commit-config.yaml`, `lefthook.yml`, `husky`) run the order below, and the PATCH per-edit lint gate must mirror it. This section is for PATCH and REVIEW when the touched code includes scripts, package config, CI/CD config, or tooling setup.
@@ -106,6 +266,12 @@ Before recommending a pre-commit setup, identify:
 3. **Existing hook config** - check for `.pre-commit-config.yaml`, `.husky/`, `lint-staged` config in `package.json`.
 
 If any of these exist, the recommendation must align with them. Do not suggest replacing an existing working setup.
+
+### Hook tool preference
+
+- **Node.js projects**: MUST use Husky + lint-staged. `.pre-commit-config.yaml` is not the preferred path for Node.js; use Husky unless the project already has a working pre-commit setup that must be preserved.
+- **Python projects**: MUST use `.pre-commit-config.yaml` with local hooks. Husky is not the preferred path for Python.
+- **CI pipelines**: `.github/workflows/*` and `.gitlab-ci.yml` are forbidden in managed repos. PLAN must not recommend CI pipelines; REVIEW flags their presence as a soft-tier `S-precommit` finding.
 
 ### REVIEW rule (pre-commit)
 
@@ -152,6 +318,13 @@ If any `.sh` or `.ps1` scripts exist in the repo that should run as hooks, they 
 - Do not suggest `--no-verify` as a workaround for a broken hook. Fix the hook.
 - Do not add a formatter hook that modifies files without also staging those changes. Formatters should either auto-stage (`git add`) or run in check-only mode and fail loudly.
 - Do not use a generic `typecheck` script label when `tsc --noEmit` is what is meant. Be explicit.
+
+### A11y and SEO validation
+
+For projects with frontend UI:
+- Run axe-core or pa11y against changed pages/components when the change touches markup, templates, or component structure
+- Run lighthouse CI or equivalent for SEO score when the change touches page-level content, meta tags, or routing
+- A11y/SEO failures are soft-tier findings (S23-S26) unless they constitute an accessibility violation under applicable law (e.g., WCAG 2.1 AA required for public sector) - in which case they escalate to H-tier with legal risk noted
 
 ## Cross-team requirements
 
@@ -510,8 +683,11 @@ Host capability reaches the script via the `BABA_READ_ONLY` environment flag; wh
 
 ### Hard rules
 
-- One file, one writer. A session must hold the lock for a file before any write to that file, and must not hold the lock for any file outside its `## Edited Files` ledger.
-- Lock acquisition is required on **first write in any phase**, not just PATCH. Reads never acquire locks. The cost of this choice is a read-then-write race that the commit/push gate re-checks at staging time.
+<MUST>One file, one writer. A session must hold the lock for a file before any write to that file, and must not hold the lock for any file outside its `## Edited Files` ledger.</MUST>
+<MUST>Lock acquisition is required on first write in any phase, not just PATCH. Reads never acquire locks. The cost of this choice is a read-then-write race that the commit/push gate re-checks at staging time.</MUST>
+<MUST_NOT>Skip lock acquisition when a shell tool can invoke the lock script.</MUST_NOT>
+<MUST_NOT>Auto-steal a live peer lock.</MUST_NOT>
+<MUST_NOT>Release a lock whose `owner` is not this session id.</MUST_NOT>
 - Stale locks are never auto-stolen. Surface the choice to the user.
 - The commit/push gate staging is refused if any path in the proposed commit is not currently locked by this session or released by this session within the current PATCH/DIRECT step.
 - A session never releases a lock whose `owner` is not its own session id. Releasing a peer's lock is a protocol violation and surfaces as BLOCKED.
@@ -538,7 +714,7 @@ The presence of a live peer does not change behavior directly. It only means loc
 
 ### Acquisition
 
-Before the first write to a file:
+<MUST>Before the first write to a file, acquire the lock. Lock acquisition MUST complete before the per-edit lint gate runs for the first write to the file; lint auto-fixes that occur before lock acquisition are a protocol breach.</MUST>
 
 1. Verify the file is in the session's `## Edited Files` ledger. A file not in the ledger is not eligible for a lock, and acquiring one anyway is BLOCKED.
 2. Compute the flat name per the Lock directory section.
@@ -546,8 +722,6 @@ Before the first write to a file:
 Use `New-LockDirectoryAtomic` (create without `-Force`); a `-Force` create is never atomic and silently steals.
 4. On success, write `owner` and `acquired_at` into the new directory. The lock is held.
 5. On "already locked", read the existing `owner` and `acquired_at`. If `acquired_at` is within `SESSION_LOCK_TTL_MINUTES`, the peer is live; enter Wait and surface. Otherwise the lock is stale; enter Stale lock handling.
-
-Lock acquisition MUST complete before the per-edit lint gate runs for the first write to the file. Lint auto-fixes that occur before lock acquisition are a protocol breach.
 
 Before the create attempt, a per-file acquisition also refuses when a live peer dependency lock covers the flat name, and session identity always comes from the once-per-session cache, never from a per-call generated fallback.
 
@@ -584,7 +758,7 @@ The model records the stale-lock event in the session's state file under `## Loc
 
 ### Commit/push gate integration
 
-The commit/push gate must, before staging, call into session file locks to verify: for every path in the proposed commit, the current session holds the lock or released it within the current PATCH/DIRECT step.
+<MUST>The commit/push gate must, before staging, call into session file locks to verify: for every path in the proposed commit, the current session holds the lock or released it within the current PATCH/DIRECT step.</MUST>
 Verification also scans every lock's `dependencies.txt`, so a file covered by a live peer dependency lock refuses staging even without an exact-path lock.
 Any path that fails this check is surfaced to the user with the same three options as Wait and surface, and staging is refused until the user decides.
 The re-read check that defends against the read-then-write race lives in the commit/push gate right after the lock check: re-read the working-tree version of each path, diff it against the in-memory expected content, and refuse to stage any path with unowned hunks.
@@ -929,11 +1103,10 @@ Every backlog item carries one milestone tag. A milestone is reached when all ta
 
 ### Task-card enrichment rules
 
-- `[P]` parallel flag: marks a task runnable in parallel with other tasks in the same story. Parallel tasks each keep an unambiguous card; they run in separate sessions (own state files) or with defined shared-cursor semantics - never mixed phases in one session, never a clobbered `review_cursor`.
 - Story grouping: tasks sharing a `Story` id belong to one user story. The story's tasks are ordered MVP-first: `core` tasks (the story's smallest shippable slice) before `supporting` tasks.
 - MVP-first precedence: MVP ordering applies WITHIN a story. Across stories, ICE remains the deterministic pull order (then size, then milestone date).
 - Test-first flag: a plan-level ordering signal that test work precedes implementation for that task. It is never a test-authoring grant: tests are authored only on user request or via the BabaTester handoff.
-- Split rule still applies: a grouped or parallel-marked card at L size, or with multiple independent deliverables, MUST be split (or carry an explicit one-line rationale).
+- Split rule still applies: a grouped card at L size, or with multiple independent deliverables, MUST be split (or carry an explicit one-line rationale).
 
 ## Relevance Discovery
 
@@ -981,193 +1154,3 @@ A protocol that enhances CHECKLIST file inventory initialization when the target
 - Runs during CHECKLIST initialization, before any checklist ticks.
 - Output pre-populates CHECKLIST `File inventory:` section.
 - Evidence recorded in session state under `## Discovery Evidence`.
-
-## REVIEW Merge Protocol
-
-When `PARALLEL_REVIEW` completes, N BabaSensei reviewers and BabaTester subagent have produced findings in their partitioned state sections (`## Sensei State 1`, `## Sensei State 2`, ..., `## Sensei State N`, `## Tester State`). BabaReviewer acts as the merge auditor: it receives the merged findings, verifies the merge protocol was applied correctly (Sensei authority on hard-tier, union on soft-tier), and produces the final merge verdict before the session enters REVIEW. The merge protocol produces unified findings for the consolidated REVIEW phase.
-
-### Merge Rules
-
-1. **Hard-tier (H1-H12) - Sensei authority**: For any criterion where multiple reviewers reported findings on the same file/line range, the highest-confidence Sensei verdict takes precedence. The merged finding uses that reviewer's confidence, verdict, and mitigation. Other reviewers' findings are recorded as cross-reference notes.
-
-2. **Soft-tier (S1-S20) - Union**: All findings from all reviewers are included. Duplicate findings (same criterion, same file, overlapping line range) are deduplicated keeping the highest confidence. Non-overlapping findings from any reviewer are included as-is.
-
-3. **Test strategy items**: BabaTester's `binding_items` and `strong_hints` are preserved in full and carried into the consolidated handoff to BabaDev.
-
-4. **Preservation constraints**: Union of all reviewers' constraints. Deduplicated by constraint text.
-
-5. **Output**: Unified `accepted_violations`, `excluded_violations`, `preserve_constraints` lists written to the main session state file. Partitioned sections (`## Sensei State 1..N`, `## Tester State`) are retained for audit but no longer written to during REVIEW phase.
-
-6. **Merge audit**: BabaReviewer verifies that rules 1-5 were applied correctly and emits the final merge verdict (`merged: complete` or `merged: FAIL`). Any merge-protocol violation is flagged as a hard-tier finding before the session proceeds to REVIEW.
-
-### Merge Complexity Warning
-
-When N > 8, emit warning: "Merge complexity is high; consider consolidating reviewers."
-When N > 12, emit warning: "Merge may exceed 10 minutes; consider splitting into two review passes."
-
-### Partial Merge
-
-When streaming partial handoffs are active, the merge protocol supports partial output:
-- Confirmed findings merge immediately into unified `accepted_violations`, `excluded_violations`, `preserve_constraints` lists.
-- Pending findings remain in partitioned `## Sensei State N` sections and are not merged until confirmed.
-- The merge verdict includes `merged: partial` when pending items remain.
-- A subsequent merge run consumes the pending partitions and produces `merged: complete`.
-
-### Conflict Detection
-
-Conflicts are detected when:
-- Same criterion ID
-- Same file path
-- Overlapping line ranges (any intersection)
-
-Conflicts are resolved per Rule 1 (hard-tier) or Rule 2 (soft-tier) without user intervention. The merge is deterministic and recorded in the session state file under `## Phase Artifacts`.
-
-### Progress Tracking
-
-During PARALLEL_REVIEW, the session state `phase_status` field tracks:
-- `sensei`: current phase (CHECKLIST, DOCS, REVIEW, complete)
-- `tester`: current phase (CHECKLIST, DOCS, REVIEW, complete)
-- `merge`: pending | complete
-
-The REVIEW phase template displays: `Parallel progress: [sensei-1: batch 3/5, sensei-2: batch 2/3, sensei-3: batch 1/2, tester: batch 4/5]` or `Parallel progress: [merged: complete]`.
-
-### Partition Algorithm (Architectural Layer)
-
-1. **Collect file inventory**: From CHECKLIST `File inventory` section
-2. **Classify by layer**: Detect architectural layer from path patterns:
-   - `controllers/`, `handlers/`, `routes/` → controllers
-   - `services/`, `usecases/`, `interactors/` → services
-   - `repositories/`, `dao/`, `data-access/` → repositories
-   - `middleware/`, `interceptors/` → middleware
-   - `components/`, `views/`, `pages/` → components
-   - `hooks/`, `composables/` → hooks
-   - `stores/`, `state/` → stores
-   - `utils/`, `helpers/`, `lib/` → utils
-   - `tests/`, `spec/`, `__tests__/` → tests
-3. **Assign reviewers**: Group files by layer; assign one reviewer per non-empty layer group
-4. **Auto-size**: N = max(1, ceil(total_files / 20)) reviewers
-5. **Overflow**: If layer groups > N, merge smallest groups until ≤ N reviewers
-
-Each reviewer receives only its layer's files and writes to its `## Sensei State {index}` section.
-
-## DOCS Parallel Protocol
-
-When `DOCS_PARALLEL` is entered, the in-scope dependencies are partitioned by package manager type (npm, pip, cargo, go, maven, gradle) and subagents are spawned per partition with partitioned evidence collection (max 3 concurrent subagents).
-
-### Partition Algorithm
-
-1. **Collect dependencies**: Read from manifests (package.json, pyproject.toml, Cargo.toml, go.mod, pom.xml, build.gradle) and lockfiles
-2. **Group by type**: Partition into groups by package manager (npm, pip, cargo, go, maven, gradle)
-3. **Assign subagents**: One subagent per non-empty group, up to max 3 concurrent (per `parallel_budget.docs = 3`)
-4. **Queue overflow**: If >3 groups, remaining groups wait for a subagent slot
-
-### Subagent Coordination
-
-Each subagent:
-- Reads/writes only its group's section in `## Lookup State` in session state
-- Runs context7 (primary) or exa/curl (fallback) lookups for its assigned dependencies
-- Records: dependency name, exact version, official docs URL, changelog window checked, key sections consulted with URL+anchor, notes affecting review
-- Respects budget: max 3 lookups per dependency, distinct fingerprints
-- On completion: updates group Status to `complete`, records evidence count
-- On failure: updates group Status to `failed`, records error
-
-### Result Aggregation
-
-After all groups complete (or timeout at 60s per subagent):
-1. **Deduplicate**: If same dependency appears in multiple groups (should not happen), keep highest confidence
-2. **Merge evidence**: Combine all `Verified evidence` entries into single list
-3. **Conflict resolution**: If conflicting versions reported for same dependency, flag in output with both versions noted
-4. **Output**: Write unified evidence to main session state; set `Aggregation: complete`
-
-### Progress Tracking
-
-During DOCS_PARALLEL, session state tracks:
-- `docs_partitions`: active subset of [npm, pip, cargo, go, maven, gradle]
-- Per-group status in `## Lookup State`
-
-Template displays: `Groups: [npm: 3 deps, pip: 2 deps, cargo: 1 dep] -- Active: [pip: 2/2 complete] -- Completed: [npm: complete]`
-
-### Timeout Handling
-
-- Per-subagent timeout: 60 seconds
-- If subagent times out: mark group `failed`, continue with other groups
-- Aggregation proceeds with available evidence; missing groups noted in output
-- User can retry failed groups via `/retry-docs <group>` if needed
-
-### Fallback to Sequential
-
-- Single dependency type detected -> sequential `DOCS` phase (no subagents)
-- `/noparallel` flag -> sequential `DOCS`
-- `parallel_budget.docs = 0` -> sequential `DOCS`
-
-## PATCH Test Parallelization Protocol
-
-When the PATCH verification gate runs, it detects independent test suites and executes them concurrently to reduce total verification time.
-
-### Independence Detection
-
-Before running tests, scan project configuration to identify which test suites are isolated (parallel-safe):
-
-1. **Scan project config**: Read `package.json` (scripts, jest.config), `pyproject.toml` (pytest.ini), `jest.config.js`, `pytest.ini`, `vitest.config.ts`, etc.
-2. **Check isolation markers** (all must be true for a suite to be `isolated`):
-   - No shared `beforeAll` / `setup` / `beforeEach` that mutate global state
-   - No shared database fixtures or test containers
-   - No global state mutations (module-level variables, singletons, caches)
-   - No test ordering dependencies (`@Order`, `dependsOn`, `test.only`, numbered test files)
-   - No shared external resources (ports, temp files, environment variables)
-   - No `test.concurrent` disabled or `maxConcurrency: 1` in config
-3. **Categorize suites**: Each test suite/configuration entry classified as:
-   - `isolated` — safe for parallel execution
-   - `sequential-only` — must run sequentially
-4. **Default conservative**: If detection is ambiguous or config unreadable, mark as `sequential-only`
-
-### Parallel Execution Strategy
-
-1. **Always sequential** (required order):
-   - `lint` (formatter + linter) — must run first, auto-fixes may affect typecheck
-   - `typecheck` (`tsc --noEmit`, `pyrefly check`, `mypy`) — depends on lint output
-2. **Parallel groups** (run concurrently, max `parallel_budget.patch = 4`):
-   - Isolated test suites grouped by type: `unit`, `integration`, `e2e`, `playwright`
-   - Each group runs up to 4 concurrent background processes
-   - Aggregate results with per-suite timing
-3. **Always sequential** (H11 aggregate gate):
-   - Playwright e2e smoke — single run at commit gate
-   - Regression baseline/post-fix — same test, before/after
-
-### Result Aggregation
-
-- Collect exit codes, stdout, timing per suite
-- Report: `Parallel groups: [lint+typecheck: sequential], [unit: parallel 3/3], [integration: sequential], [e2e: sequential] -- total 45s (vs 78s sequential)`
-- If any parallel suite FAIL, mark overall verification FAIL
-
-### Fallback to Sequential
-
-- Zero isolated suites detected -> `Parallel test execution skipped: no isolated suites detected`
-- `/noparallel` flag -> all sequential
-- `parallel_budget.patch = 0` -> all sequential
-- Detection failure (config unreadable, ambiguous) -> all sequential with note
-
-### Configuration Examples
-
-**package.json (Jest)**:
-```json
-{
-  "scripts": {
-    "test:unit": "jest --projects=unit",
-    "test:integration": "jest --projects=integration"
-  },
-  "jest": {
-    "projects": ["unit", "integration"],
-    "maxWorkers": 4
-  }
-}
-```
-
-**pyproject.toml (pytest)**:
-```toml
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["tests/unit", "tests/integration"]
-```
-
-**Detection heuristic**: If `maxWorkers > 1` or `pytest -n auto` works without shared fixtures, mark as isolated.

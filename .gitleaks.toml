@@ -1,0 +1,104 @@
+title = "gitleaks config for babae"
+
+[allowlist]
+description = "Allowlisted paths and patterns for babae"
+files = [
+    "*.md",
+    "*.txt",
+    "LICENSE",
+    "CHANGELOG*",
+    ".gitignore",
+    ".gitattributes",
+    "*.example",
+    "*.sample",
+    "*.template"
+]
+paths = [
+    "dist/",
+    "node_modules/",
+    ".opencode/",
+    ".claude/",
+    "prompt-system/",
+    ".vscode/",
+    ".cursor/"
+]
+
+[allowlist]
+description = "Allowlist for known test fixtures and documentation"
+regexes = [
+    """(?i)(example|sample|test|demo|placeholder|dummy|fake|mock)""",
+    """(?i)your[_-]?(api[_-]?key|token|secret|password)""",
+    """(?i)insert[_-]?(key|token|secret)""",
+    """(?i)replace[_-]?(me|this)""",
+    """(?i)xxx+""",
+    """(?i)redacted""",
+    """(?i)<.*>""",
+    """(?i)\$\{.*\}""",
+    """(?i)env\.?\w*"""
+]
+
+[[rules]]
+description = "Generic API Key"
+id = "generic-api-key"
+regex = """(?i)(api[_-]?key|apikey)['\"\\s:=]+[a-zA-Z0-9_\-]{20,}"""
+tags = ["key", "api"]
+
+[[rules]]
+description = "Generic Secret"
+id = "generic-secret"
+regex = """(?i)(secret|password|passwd|pwd)['\"\\s:=]+[a-zA-Z0-9_\-!@#$%^&*()]{8,}"""
+tags = ["secret", "password"]
+
+[[rules]]
+description = "GitHub Personal Access Token"
+id = "github-pat"
+regex = """gh[pousr]_[A-Za-z0-9_]{36,}"""
+tags = ["github", "token"]
+
+[[rules]]
+description = "GitLab Personal Access Token"
+id = "gitlab-pat"
+regex = """glpat-[A-Za-z0-9_\-]{20,}"""
+tags = ["gitlab", "token"]
+
+[[rules]]
+description = "AWS Access Key ID"
+id = "aws-access-key"
+regex = """AKIA[0-9A-Z]{16}"""
+tags = ["aws", "key"]
+
+[[rules]]
+description = "AWS Secret Access Key"
+id = "aws-secret-key"
+regex = """(?i)aws[_-]?secret[_-]?access[_-]?key['\"\\s:=]+[A-Za-z0-9/+=]{40}"""
+tags = ["aws", "secret"]
+
+[[rules]]
+description = "Slack Token"
+id = "slack-token"
+regex = """xox[baprs]-[0-9a-zA-Z]{10,48}"""
+tags = ["slack", "token"]
+
+[[rules]]
+description = "Discord Token"
+id = "discord-token"
+regex = """[MN][A-Za-z\d]{23}\.[\w-]{6}\.[\w-]{27}"""
+tags = ["discord", "token"]
+
+[[rules]]
+description = "Private Key"
+id = "private-key"
+regex = """-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"""
+tags = ["key", "private"]
+
+[[rules]]
+description = "JWT Token"
+id = "jwt-token"
+regex = """eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"""
+tags = ["jwt", "token"]
+
+[[rules]]
+description = "PowerShell PSCredential"
+id = "pscredential"
+regex = """(?i)(Get-Credential|New-Object PSCredential|ConvertTo-SecureString).*['\"\\s:=]+[a-zA-Z0-9_\-!@#$%^&*()]{8,}"""
+tags = ["powershell", "credential"]

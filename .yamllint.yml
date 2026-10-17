@@ -1,0 +1,44 @@
+extends: default
+
+rules:
+  line-length:
+    max: 120
+    level: warning
+  indentation:
+    spaces: 2
+    level: error
+  trailing-spaces:
+    level: error
+  empty-lines:
+    max: 2
+    max-start: 0
+    max-end: 1
+    level: warning
+  document-start:
+    level: disable
+  document-end:
+    level: disable
+  comments:
+    level: disable
+  comments-indentation:
+    level: disable
+  truthy:
+    level: disable
+  key-ordering:
+    level: disable
+  braces:
+    level: disable
+  brackets:
+    level: disable
+  colons:
+    level: disable
+  hyphens:
+    level: disable
+  quoted-strings:
+    level: disable
+  new-line-at-end-of-file:
+    level: error
+  empty-values:
+    forbid-in-block-mappings: true
+    forbid-in-flow-mappings: true
+    level: error
